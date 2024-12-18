@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Chat</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!-- Menu button for mobile -->
+<button id="menu-toggle" aria-label="Toggle menu">
+    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path>
+    </svg>
+</button>
+
+<!-- Overlay for the sidebar on mobile -->
+<div class="sidebar-overlay"></div>
+
+<!-- Sidebar -->
+<div id="menu">
+    <div class="menu-header">
+        <h2 class="section-title">Claude Chat</h2>
+        <button id="new-conversation" class="btn btn-success w-full">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            New Conversation
+        </button>
+    </div>
+
+    <div class="menu-content">
+        <div id="conversations-list" class="space-y-2">
+            <!-- Conversations will be added here dynamically -->
+        </div>
+    </div>
+
+    <div class="menu-footer">
+        <div id="menu-options" class="menu-options">
+            <!-- Only the arrow -->
+            <div class="border-arrow" id="toggle-menu-options">
+                <svg class="w-5 h-5 expand-arrow text-gray-400" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+                </svg>
+                <svg class="w-5 h-5 collapse-arrow hidden text-gray-400" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6 1.41 1.41z"/>
+                </svg>
+            </div>
+        
+            <!-- Content with a single border -->
+            <div class="options-content space-y-4">
+                <!-- Options content -->
+                <div class="space-y-2">
+                    <label class="text-sm text-gray-400" for="model-select">Model</label>
+                    <select id="model-select" class="w-full">
+                        <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                        <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                        <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                    </select>
+                </div>
+
+                <div id="api-key-container" class="space-y-2">
+                    <label class="text-sm text-gray-400" for="api-key-input">API Key</label>
+                    <input type="password" id="api-key-input" placeholder="sk-...">
+                </div>
+                <div id="system-config-container"></div>
+                <div id="max-tokens-container" class="space-y-2">
+                    <label class="text-sm text-gray-400" for="max-tokens-output">Max Tokens</label>
+                    <input type="number" id="max-tokens-output" value="4000">
+                </div>
+
+                <button id="toggle-debug" class="btn btn-secondary w-full">
+                    Toggle Debug Panel
+                </button>
+
+                <div id="debug-json-container" class="debug-json-wrapper">
+                    <input type="checkbox" id="debug-json-checkbox">
+                    <label for="debug-json-checkbox" class="text-sm text-gray-400">Debug JSON</label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Chat Container -->
+<div id="chat-container">
+    <div id="chat-box">
+        <!-- Messages will be added here dynamically -->
+    </div>
+
+    <div id="input-container">
+        <div class="file-upload-area">
+            <input type="file" id="file-input" multiple hidden>
+            <button id="upload-button" class="btn btn-primary">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                </svg>
+                Upload Files
+            </button>
+            <div id="uploaded-files" class="flex flex-wrap gap-2">
+                <!-- Uploaded files will be added here -->
+            </div>
+        </div>
+
+        <div class="input-wrapper">
+            <textarea id="user-input" placeholder="Write a message..."></textarea>
+            <button id="send-button" class="btn btn-primary">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                          d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Debug Panel -->
+<div id="debug-panel"></div>
+
+<!-- Libraries for file processing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<!-- En el head o justo antes de cerrar el body -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+<!-- El componente SystemConfig debe ir antes que app.js -->
+<script src="/js/components/SystemConfig.js"></script>
+
+<!-- Tus scripts de aplicación -->
+<script type="module" src="js/utils.js"></script>
+<script type="module" src="js/api-service.js"></script>
+<script type="module" src="js/file-processor.js"></script>
+<script type="module" src="js/file-handler.js"></script>
+<script type="module" src="js/ui-manager.js"></script>
+<script type="module" src="js/conversation.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

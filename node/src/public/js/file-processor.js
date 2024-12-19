@@ -1,5 +1,12 @@
 import { debug } from './utils.js';
 
+const SUPPORTED_IMAGE_TYPES = [
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp'
+];
+
 async function processCompressedFile(file) {
     const zip = new JSZip();
     const arrayBuffer = await file.arrayBuffer();
@@ -98,13 +105,27 @@ async function processCompressedFile(file) {
     return { text: finalContent, type: 'text' };
 }
 
+async function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const base64String = reader.result
+                .replace('data:', '')
+                .replace(/^.+,/, '');
+            resolve(base64String);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
 export async function processFile(file) {
     try {
         const fileType = file.type;
         const fileName = file.name.toLowerCase();
-        debug(`Processing special file: ${fileName} (${fileType})`);
+        debug(`Processing file: ${fileName} (${fileType})`);
 
-        // Check if it's a compressed file
+        // Procesar archivo comprimido
         if (fileType.includes('zip') || 
             fileType.includes('x-rar') ||
             fileName.endsWith('.zip') ||
@@ -114,32 +135,36 @@ export async function processFile(file) {
             return await processCompressedFile(file);
         }
         
-        // PDF Processing
+        // Procesar PDF
         if (fileType === 'application/pdf' || fileName.endsWith('.pdf')) {
-            debug('Starting PDF processing');
-            const arrayBuffer = await file.arrayBuffer();
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-            const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
-            let fullText = '';
-            
-            for (let i = 1; i <= pdf.numPages; i++) {
-                debug(`Processing page ${i} of ${pdf.numPages}`);
-                const page = await pdf.getPage(i);
-                const textContent = await page.getTextContent();
-                fullText += textContent.items.map(item => item.str).join(' ') + '\n';
-            }
-            
-            debug('PDF processed successfully');
-            return { 
-                text: fullText,
-                type: 'text',
-                metadata: {
-                    pages: pdf.numPages,
-                    type: 'PDF'
+            debug('Processing PDF file in native Claude format');
+            const base64Data = await fileToBase64(file);
+            return {
+                type: 'document',
+                source: {
+                    type: 'base64',
+                    media_type: 'application/pdf',
+                    data: base64Data,
+                    metadata: {file_name: fileName}
                 }
             };
         }
         
+        // Procesar imágenes
+        if (SUPPORTED_IMAGE_TYPES.includes(fileType)) {
+            debug('Processing image in native Claude format');
+            const base64Data = await fileToBase64(file);
+            return {
+                type: 'image',
+                source: {
+                    type: 'base64',
+                    media_type: fileType,
+                    data: base64Data,
+                    metadata: {file_name: fileName}
+                }
+            };
+        }
+
         // Word Processing
         if (fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
             fileType === 'application/msword' ||
@@ -168,7 +193,6 @@ export async function processFile(file) {
             const workbook = XLSX.read(arrayBuffer, { type: 'array' });
             let fullText = '';
             
-            // Process all sheets
             for (const sheetName of workbook.SheetNames) {
                 const sheet = workbook.Sheets[sheetName];
                 const csvContent = XLSX.utils.sheet_to_csv(sheet);

@@ -53,8 +53,19 @@ function validateFileSize(file) {
     }
 
     let currentTotalSize = 0;
-    for (const [_, content] of window.uploadedFiles) {
-        currentTotalSize += content.length;
+    for (const [_, fileData] of window.uploadedFiles) {
+        // Si es un objeto con source (formato nuevo para imágenes/PDFs)
+        if (fileData.source && fileData.source.data) {
+            currentTotalSize += fileData.source.data.length * 0.75; // Estimación del tamaño base64
+        }
+        // Si es un string (formato antiguo)
+        else if (typeof fileData === 'string') {
+            currentTotalSize += fileData.length;
+        }
+        // Si es un objeto con text (otros formatos)
+        else if (fileData.text) {
+            currentTotalSize += fileData.text.length;
+        }
     }
 
     if (currentTotalSize + file.size > MAX_TOTAL_SIZE) {
@@ -81,10 +92,17 @@ async function processFile(file, uploadedFilesContainer) {
         const specialProcessing = await processSpecialFile(file);
         
         if (specialProcessing) {
-            // If it's a special file (PDF, Word, Excel, ZIP...)
-            window.uploadedFiles.set(file.name, specialProcessing.text);
-            totalSize += specialProcessing.text.length;
-            addFileElement(file, specialProcessing.text, uploadedFilesContainer);
+            // Si es una imagen o PDF (formato nuevo)
+            if (specialProcessing.type === 'image' || 
+                (specialProcessing.type === 'document' && specialProcessing.source.media_type === 'application/pdf')) {
+                window.uploadedFiles.set(file.name, specialProcessing);
+                totalSize += specialProcessing.source.data.length * 0.75; // Estimación del tamaño base64
+            } else {
+                // Para otros tipos de archivos especiales
+                window.uploadedFiles.set(file.name, specialProcessing);
+                totalSize += specialProcessing.text ? specialProcessing.text.length : 0;
+            }
+            addFileElement(file, specialProcessing, uploadedFilesContainer);
             return;
         }
 
@@ -118,22 +136,29 @@ function addFileElement(file, content, container) {
 
     let displayName = `${file.name} (${(file.size/1024/1024).toFixed(2)}MB)`;
     
-    // If it's a compressed file, add a summary of the content
-    if (file.type.includes('zip') || 
+    // Si es contenido de archivo comprimido
+    if (typeof content === 'string' && (
+        file.type.includes('zip') || 
         file.type.includes('x-rar') ||
         file.name.toLowerCase().endsWith('.zip') ||
         file.name.toLowerCase().endsWith('.rar') ||
-        file.name.toLowerCase().endsWith('.7z')) {
+        file.name.toLowerCase().endsWith('.7z'))) {
         
-        // Extract structure information
-        const structureMatch = content.match(/=== ESTRUCTURA DEL ARCHIVO COMPRIMIDO ===([\s\S]*?)(===|<file_contents)/);
+        const structureMatch = content.match(/=== COMPRESSED FILE STRUCTURE ===([\s\S]*?)(===|<file_contents)/);
         if (structureMatch) {
             const structure = structureMatch[1].trim();
             const fileCount = (structure.match(/📄/g) || []).length;
             const dirCount = (structure.match(/📁/g) || []).length;
-            
             displayName += `\n  ${fileCount} files, ${dirCount} directories`;
         }
+    }
+    // Si es una imagen
+    else if (content.type === 'image') {
+        displayName += '\n  [Image file]';
+    }
+    // Si es un PDF
+    else if (content.type === 'document' && content.source.media_type === 'application/pdf') {
+        displayName += '\n  [PDF document]';
     }
 
     fileElement.innerHTML = `
@@ -143,7 +168,20 @@ function addFileElement(file, content, container) {
     
     fileElement.querySelector('.remove-file').addEventListener('click', (e) => {
         const filename = e.target.dataset.filename;
-        removeFile(filename, fileElement, content.length);
+        const fileContent = window.uploadedFiles.get(filename);
+        let contentSize;
+        
+        if (fileContent.source && fileContent.source.data) {
+            contentSize = fileContent.source.data.length * 0.75; // Estimación para base64
+        } else if (typeof fileContent === 'string') {
+            contentSize = fileContent.length;
+        } else if (fileContent.text) {
+            contentSize = fileContent.text.length;
+        } else {
+            contentSize = 0;
+        }
+        
+        removeFile(filename, fileElement, contentSize);
     });
     
     container.appendChild(fileElement);

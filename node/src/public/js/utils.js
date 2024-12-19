@@ -60,8 +60,19 @@ export function debug(message, type = 'info') {
     // Asegurar que el tipo es una cadena
     const logType = String(type).toLowerCase();
     
-    // Asegurar que el mensaje es una cadena
-    let formattedMessage = typeof message === 'string' ? message : JSON.stringify(message, null, 2);
+    // Formatear el mensaje dependiendo de su tipo
+    let formattedMessage = '';
+    if (typeof message === 'string') {
+        formattedMessage = message;
+    } else if (typeof message === 'object') {
+        try {
+            formattedMessage = JSON.stringify(message, null, 2);
+        } catch (e) {
+            formattedMessage = String(message);
+        }
+    } else {
+        formattedMessage = String(message);
+    }
     
     // Formatear timestamp
     const timestamp = new Date().toISOString().split('T')[1].slice(0, 12);

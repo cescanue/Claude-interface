@@ -75,8 +75,8 @@ class DBService {
               -- Insertar valores por defecto si la tabla está vacía
                 INSERT INTO system_config (system_directives, cache_context)
                 SELECT 
-                    '', 
-                    'You are my personal AI, an AI assistant and you name is AI. Provide accurate and helpful answers and by default in markdown. The user is interacting with you through a web interface. Strive to be concise but complete in your answers.'
+                    'You are my personal AI assistant named AI. Provide accurate and helpful answers, and by default, respond in Markdown. The user is interacting with you through a web interface. Strive to be concise but complete in your answers. Additionally, ensure that your responses are aesthetically pleasing, utilizing proper formatting, styling, and visual organization to enhance readability and engagement.', 
+                    ''
                 WHERE NOT EXISTS (SELECT 1 FROM system_config);
             `;
             await client.query(systemConfigQuery);

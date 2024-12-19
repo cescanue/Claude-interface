@@ -7,7 +7,30 @@ export function loadSavedApiKey(apiKeyInput) {
     }
 }
 
-export async function sendToAPI(message, elements, conversations, activeConversationId, retryCount = 0) {
+// Función auxiliar para limpiar metadatos
+function cleanContentForAPI(content) {
+    if (Array.isArray(content)) {
+        return content.map(item => {
+            if (item.type === 'text') {
+                return item;
+            } else if (item.type === 'image' || item.type === 'document') {
+                // Crear una copia sin los metadatos
+                return {
+                    type: item.type,
+                    source: {
+                        type: item.source.type,
+                        media_type: item.source.media_type,
+                        data: item.source.data
+                    }
+                };
+            }
+            return item;
+        });
+    }
+    return content;
+}
+
+export async function sendToAPI(messageContent, elements, conversations, activeConversationId, retryCount = 0) {
     const MAX_RETRIES = 3;
     const RETRY_DELAY = 2000;
 
@@ -15,7 +38,6 @@ export async function sendToAPI(message, elements, conversations, activeConversa
         debug('Sending request to the API...' + (retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : ''));
         debug(`Selected model: ${elements.modelSelect.value}`);
         
-        // Obtener la configuración del sistema
         const systemConfig = await fetch('/api/system-config').then(res => res.json())
             .catch(error => {
                 debug('Error fetching system config, continuing without it:', error);
@@ -28,14 +50,14 @@ export async function sendToAPI(message, elements, conversations, activeConversa
             stream: true
         };
 
-        // Añadir configuración del sistema si está presente
         if (systemConfig.systemDirectives || systemConfig.cacheContext) {
             requestBody.system = [];
             
             if (systemConfig.systemDirectives) {
                 requestBody.system.push({
                     type: "text",
-                    text: systemConfig.systemDirectives
+                    text: systemConfig.systemDirectives,
+                    cache_control: { type: "ephemeral" }
                 });
             }
             
@@ -48,11 +70,13 @@ export async function sendToAPI(message, elements, conversations, activeConversa
             }
         }
 
-        // Añadir mensajes después de la configuración del sistema
-        requestBody.messages = conversations[activeConversationId].map(msg => ({
-            role: msg.role,
-            content: msg.content
-        }));
+        // Convertir mensajes anteriores al formato correcto y limpiar metadatos
+        requestBody.messages = conversations[activeConversationId].map(msg => {
+            return {
+                role: msg.role,
+                content: cleanContentForAPI(msg.content)
+            };
+        });
 
         // Add verification for the debug JSON checkbox
         const debugJsonCheckbox = document.getElementById('debug-json-checkbox');
@@ -78,7 +102,6 @@ export async function sendToAPI(message, elements, conversations, activeConversa
         if (!response.ok) {
             const errorText = await response.text();
             debug(`Error in response: ${errorText}`, 'error');
-            // Clear incomplete message before throwing the error
             const incompleteMessage = document.querySelector('.message.incomplete');
             if (incompleteMessage) {
                 incompleteMessage.remove();
@@ -90,11 +113,15 @@ export async function sendToAPI(message, elements, conversations, activeConversa
         const decoder = new TextDecoder();
         let accumulatedMessage = '';
         let buffer = '';
+        let lastResponseTime = Date.now();
 
         try {
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
+
+                // Actualizar el tiempo de última respuesta
+                lastResponseTime = Date.now();
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
@@ -108,25 +135,27 @@ export async function sendToAPI(message, elements, conversations, activeConversa
                             document.dispatchEvent(new CustomEvent('messageComplete', {
                                 detail: { text: accumulatedMessage }
                             }));
-                            return { content: [{ text: accumulatedMessage }] };
+                            return { 
+                                content: [{
+                                    type: 'text',
+                                    text: accumulatedMessage
+                                }]
+                            };
                         }
 
                         try {
                             const parsed = JSON.parse(data);
                             debug('Received chunk:', parsed);
 
-                            // Explicitly detect if it's an error
                             if (parsed.type === 'error' || parsed.error) {
-                                const errorMessage = parsed.error?.message || 'Unknown error in the API';
+                                const errorMessage = parsed.error?.message || parsed.message || 'Unknown error in the API';
                                 debug(`Error in response: ${errorMessage}`, 'error');
                                 
-                                // Clear any incomplete message before triggering the error
                                 const incompleteMessage = document.querySelector('.message.incomplete');
                                 if (incompleteMessage) {
                                     incompleteMessage.remove();
                                 }
 
-                                // Trigger the error event
                                 document.dispatchEvent(new CustomEvent('messageError', {
                                     detail: {
                                         error: `API Error: ${errorMessage}`,
@@ -135,6 +164,11 @@ export async function sendToAPI(message, elements, conversations, activeConversa
                                 }));
                                 
                                 throw new Error(errorMessage);
+                            }
+
+                            // Manejo específico para error de timeout
+                            if (parsed.error?.type === 'timeout_error') {
+                                throw new Error(parsed.error.message);
                             }
 
                             if (parsed.type === 'message_start') {
@@ -149,11 +183,21 @@ export async function sendToAPI(message, elements, conversations, activeConversa
 
                             if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
                                 const newText = parsed.delta.text;
-                                accumulatedMessage = (accumulatedMessage || '') + newText;
+                                if (typeof accumulatedMessage === 'string') {
+                                    accumulatedMessage = (accumulatedMessage || '') + newText;
+                                } else {
+                                    accumulatedMessage = [{
+                                        type: 'text',
+                                        text: newText
+                                    }];
+                                }
+                                
                                 document.dispatchEvent(new CustomEvent('messageUpdate', {
                                     detail: { 
                                         text: newText,
-                                        fullText: accumulatedMessage
+                                        fullText: typeof accumulatedMessage === 'string' ? 
+                                                accumulatedMessage : 
+                                                accumulatedMessage[0].text
                                     }
                                 }));
                             }
@@ -165,7 +209,6 @@ export async function sendToAPI(message, elements, conversations, activeConversa
                         } catch (e) {
                             if (!data.includes('event:')) {
                                 debug(`Error parsing chunk: ${data}`, 'error');
-                                // Clear incomplete message before throwing the error
                                 const incompleteMessage = document.querySelector('.message.incomplete');
                                 if (incompleteMessage) {
                                     incompleteMessage.remove();
@@ -175,13 +218,22 @@ export async function sendToAPI(message, elements, conversations, activeConversa
                         }
                     }
                 }
+
+                // Verificar si ha pasado demasiado tiempo sin respuesta (60 segundos)
+                if (Date.now() - lastResponseTime > 60000) {
+                    throw new Error('Response timeout: No response received for 60 seconds');
+                }
             }
 
-            return { content: [{ text: accumulatedMessage }] };
+            return { 
+                content: [{
+                    type: 'text',
+                    text: accumulatedMessage
+                }]
+            };
             
         } catch (error) {
             debug(`Streaming error: ${error.message}`, 'error');
-            // Clear incomplete message in case of streaming error
             const incompleteMessage = document.querySelector('.message.incomplete');
             if (incompleteMessage) {
                 incompleteMessage.remove();
@@ -193,10 +245,9 @@ export async function sendToAPI(message, elements, conversations, activeConversa
         if (error.message === 'OVERLOADED' && retryCount < MAX_RETRIES) {
             debug(`Retrying in ${RETRY_DELAY/1000} seconds...`);
             await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-            return sendToAPI(message, elements, conversations, activeConversationId, retryCount + 1);
+            return sendToAPI(messageContent, elements, conversations, activeConversationId, retryCount + 1);
         }
 
-        // Ensure that any incomplete message is cleared
         const incompleteMessage = document.querySelector('.message.incomplete');
         if (incompleteMessage) {
             incompleteMessage.remove();

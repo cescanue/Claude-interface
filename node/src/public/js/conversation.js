@@ -15,18 +15,20 @@ import { sendToAPI } from './api-service.js';
 
 
 
-// Improved event listeners
 document.addEventListener('messageComplete', async (event) => {
     const messageElement = document.querySelector('.message.incomplete');
     if (messageElement) {
         messageElement.classList.remove('incomplete');
         
-        // Save the complete message in the conversation
         const { text } = event.detail;
-        if (text?.trim() && activeConversationId && conversations[activeConversationId]) {
+        if (text && activeConversationId && conversations[activeConversationId]) {
+            // Asegurarnos de que el mensaje está en el formato correcto
+            const messageContent = typeof text === 'string' ? 
+                [{ type: 'text', text: text }] : text;
+
             conversations[activeConversationId].push({ 
                 role: 'assistant', 
-                content: text 
+                content: messageContent
             });
             await saveConversations();
         }
@@ -86,69 +88,71 @@ export async function handleMessageSend(elements, message) {
 
     // Capture files before creating a new conversation
     const files = new Map(window.uploadedFiles);
-    let fullMessage = message || '';
     let displayMessage = message || '';
+    
+    // Preparar el contenido del mensaje
+    const messageContent = [];
 
-    if (!activeConversationId) {
-        await createNewConversation(elements);
+    // Añadir el texto inicial si existe
+    if (message?.trim()) {
+        messageContent.push({
+            type: 'text',
+            text: message.trim()
+        });
     }
 
+    // Procesar archivos
     if (files.size > 0) {
         debug(`Processing ${files.size} files`);
         displayMessage += displayMessage ? '\n\n' : '';
         displayMessage += 'Attached files:';
         
-        files.forEach((content, filename) => {
+        for (const [filename, content] of files.entries()) {
             displayMessage += `\n- ${filename}`;
             
-            // If it's a compressed file, show the summary in the display
-            if (filename.toLowerCase().endsWith('.zip') || 
-                filename.toLowerCase().endsWith('.rar') ||
-                filename.toLowerCase().endsWith('.7z')) {
-                const structureMatch = content.match(/=== COMPRESSED FILE STRUCTURE ===([\s\S]*?)(===|<file_contents)/);
-                if (structureMatch) {
-                    const structure = structureMatch[1].trim();
-                    const fileCount = (structure.match(/📄/g) || []).length;
-                    const dirCount = (structure.match(/📁/g) || []).length;
-                    displayMessage += `\n  ${fileCount} files, ${dirCount} directories`;
-                }
-            }
-        });
-
-        // Build the message with document formatting for Claude
-        fullMessage += '\n\n<documents>';
-        
-        files.forEach((content, filename) => {
-            fullMessage += '\n<document>';
-            fullMessage += `\n<source>${filename}</source>`;
-            
-            // For compressed files, maintain the special structure
-            if (filename.toLowerCase().endsWith('.zip') || 
-                filename.toLowerCase().endsWith('.rar') ||
-                filename.toLowerCase().endsWith('.7z')) {
-                fullMessage += `\n<document_content>${content}</document_content>`;
+            // Si es un archivo nativo de Claude (PDF o imagen)
+            if (content.type === 'document' || content.type === 'image') {
+                messageContent.push(content);
             } else {
-                const escapedContent = content
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;');
-                fullMessage += `\n<document_content>${escapedContent}</document_content>`;
+                // Para otros tipos de archivos, mantener el formato actual
+                const textContent = typeof content === 'string' ? content : content.text;
+                messageContent.push({
+                    type: 'text',
+                    text: `\n<document>\n<source>${filename}</source>\n<document_content>${textContent}</document_content>\n</document>`
+                });
             }
-            
-            fullMessage += '\n</document>';
-        });
-        
-        fullMessage += '\n</documents>';
+        }
     }
 
-    if (fullMessage.trim() || files.size > 0) {
+    if (messageContent.length > 0) {
         try {
+            // Si no hay conversación activa, crearla primero y esperar a que esté lista
+            if (!activeConversationId) {
+                debug('Creating new conversation...');
+                await createNewConversation(elements);
+                await new Promise(resolve => setTimeout(resolve, 100));
+                debug('New conversation created and ready');
+            }
+
+            // Mostrar el mensaje después de asegurar que existe la conversación
+            debug('Displaying user message...');
             appendMessage(elements, displayMessage, 'user');
-            conversations[activeConversationId].push({ 
-                role: 'user', 
-                content: fullMessage
+            
+            debug('Updating conversation with new message...');
+            conversations[activeConversationId].push({
+                role: 'user',
+                content: messageContent
             });
             await saveConversations();
+
+            // Limpiar el input y archivos inmediatamente después de guardar
+            elements.userInput.value = '';
+            elements.userInput.style.height = 'auto';
+            if (window.uploadedFiles) {
+                window.uploadedFiles.clear();
+            }
+            clearFiles(elements.uploadedFilesContainer);
+            document.dispatchEvent(new Event('filesUpdated'));
 
             const shouldUpdateTitle = message && 
                                    message.trim().length > 0 && 
@@ -160,34 +164,23 @@ export async function handleMessageSend(elements, message) {
                 updateConversationsList(elements, conversations, loadConversation, deleteConversation);
             }
 
+            debug('Starting API request...');
             showThinkingIndicator(elements);
-            await sendToAPI(fullMessage, elements, conversations, activeConversationId);
+            await sendToAPI(messageContent, elements, conversations, activeConversationId);
 
         } catch (error) {
             debug(`Error sending: ${error.message}`, 'error');
-            
-            // Ensure that the thinking indicator is hidden
             hideThinkingIndicator(elements);
             
-            // Fallback in case the messageError event fails
-            const errorElement = document.querySelector('.message.error-message');
-            if (!errorElement) {
-                const errorMessage = error.message === 'OVERLOADED' 
-                    ? 'Claude is overloaded at the moment. Please try again later.' 
-                    : 'Error communicating with the API: ' + error.message;
-                
-                appendMessage(elements, errorMessage, 'assistant', true);
-            }
+            const errorMessage = error.message === 'OVERLOADED' 
+                ? 'Claude is overloaded at the moment. Please try again later.'
+                : `Error: ${error.message}`;
+            
+            appendMessage(elements, errorMessage, 'assistant', true);
 
         } finally {
-            // Always clear files, regardless of the outcome
-            if (window.uploadedFiles) {
-                window.uploadedFiles.clear();
-            }
-            clearFiles(elements.uploadedFilesContainer);
-            document.dispatchEvent(new Event('filesUpdated'));
+            hideThinkingIndicator(elements);
 
-            // Ensure that the send button and textarea are re-enabled
             if (elements.sendButton) {
                 elements.sendButton.disabled = false;
                 elements.sendButton.style.opacity = '1';
@@ -336,29 +329,100 @@ export function loadConversation(elements, id) {
         // Container for Markdown view
         const markdownDiv = document.createElement('div');
         markdownDiv.className = 'message-content markdown-content active';
-        markdownDiv.setAttribute('data-raw-content', message.content);
         
         // Container for plain text
         const plainDiv = document.createElement('div');
         plainDiv.className = 'message-content plain-content';
-        const displayContent = formatFileDisplay(message.content);
-        plainDiv.textContent = displayContent;//message.content;
+
+        // Convertir el contenido al formato de visualización
+        let displayContent = '';
+        let rawContent = '';
+
+        // Si el contenido es un array (nuevo formato)
+        if (Array.isArray(message.content)) {
+            let filesInfo = [];
+            let textContent = [];
+            
+            message.content.forEach(item => {
+                if (item.type === 'text') {
+                    const trimmedText = item.text.trim();
+                    if (trimmedText) {
+                        // Verificar si el texto contiene una estructura de documento
+                        const documentPattern = /<document>\s*<source>(.*?)<\/source>/;
+                        const match = trimmedText.match(documentPattern);
+                        
+                        if (match && match[1]) {
+                            // Si se detecta un documento, extraer el nombre del archivo
+                            const sourceFileName = match[1];
+                            filesInfo.push(`- ${sourceFileName} [as text plain]`); 
+                        } else {
+                            // Si no es un documento, tratarlo como texto normal
+                            textContent.push(trimmedText);
+                        }
+                    }
+                } else if (item.type === 'image') {
+                    // Intentar extraer el nombre del archivo de los metadatos o usar un nombre genérico
+                    const fileName = item.source.metadata?.file_name || 'image' + (filesInfo.length + 1) + '.' + item.source.media_type.split('/')[1];
+                    filesInfo.push(`- ${fileName} [Image]`);
+                } else if (item.type === 'document') {
+                    // Intentar extraer el nombre del archivo de los metadatos o usar un nombre genérico
+                    const fileName = item.source.metadata?.file_name || 'document' + (filesInfo.length + 1) + '.pdf';
+                    filesInfo.push(`- ${fileName} [PDF Document]`);
+                }
+            });
+            
+
+            // Construir el displayContent combinando el texto y la información de archivos
+            displayContent = '';
+            if (textContent.length > 0) {
+                displayContent = textContent.join('\n');
+            }
+            if (filesInfo.length > 0) {
+                if (displayContent) displayContent += '\n\n';
+                displayContent += 'Attached files:\n' + filesInfo.join('\n');
+            }
+            
+            rawContent = displayContent;
+        } else {
+            // Si es el formato antiguo (string)
+            displayContent = formatFileDisplay(message.content);
+            rawContent = message.content;
+        }
+
+        markdownDiv.setAttribute('data-raw-content', rawContent);
+        plainDiv.textContent = displayContent;
 
         // Process content based on the message role
         if (message.role === 'assistant') {
-            const parts = parseMessageWithFiles(message.content);
-            markdownDiv.innerHTML = '';
-            
-            parts.forEach(part => {
-                if (part.type === 'file') {
-                    const fileContainer = createFileContainer(part.filename, part.content);
-                    markdownDiv.appendChild(fileContainer);
-                } else {
-                    const textDiv = document.createElement('div');
-                    textDiv.innerHTML = parseMarkdown(part.content);
-                    markdownDiv.appendChild(textDiv);
-                }
-            });
+            if (Array.isArray(message.content)) {
+                markdownDiv.innerHTML = '';
+                message.content.forEach(item => {
+                    if (item.type === 'text') {
+                        const textDiv = document.createElement('div');
+                        textDiv.innerHTML = parseMarkdown(item.text);
+                        markdownDiv.appendChild(textDiv);
+                    } /*else if (item.type === 'image') {
+                        const imagePreview = createImagePreview(item.source.data, item.source.media_type);
+                        markdownDiv.appendChild(imagePreview);
+                    } else if (item.type === 'document') {
+                        const pdfPreview = createPDFPreview(item.source.data);
+                        markdownDiv.appendChild(pdfPreview);
+                    }*/
+                });
+            } else {
+                const parts = parseMessageWithFiles(message.content);
+                markdownDiv.innerHTML = '';
+                parts.forEach(part => {
+                    if (part.type === 'file') {
+                        const fileContainer = createFileContainer(part.filename, part.content);
+                        markdownDiv.appendChild(fileContainer);
+                    } else {
+                        const textDiv = document.createElement('div');
+                        textDiv.innerHTML = parseMarkdown(part.content);
+                        markdownDiv.appendChild(textDiv);
+                    }
+                });
+            }
 
             // Set up the copy button
             const copyButton = messageElement.querySelector('.copy-button');
@@ -376,8 +440,7 @@ export function loadConversation(elements, id) {
                 };
             }
         } else {
-            // For user messages
-            const displayContent = formatFileDisplay(message.content);
+            // Para mensajes del usuario
             markdownDiv.innerHTML = parseMarkdown(displayContent);
         }
 

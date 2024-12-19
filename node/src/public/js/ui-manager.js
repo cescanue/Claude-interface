@@ -531,6 +531,80 @@ export function createCopyButton(message) {
     return button;
 }
 
+// Nuevas funciones para manejar la visualización de contenido nativo
+
+function createImagePreview(imageData, mediaType) {
+    const container = document.createElement('div');
+    container.className = 'image-preview';
+    container.style.cssText = `
+        margin: 1rem 0;
+        max-width: 100%;
+        overflow: hidden;
+        border-radius: 8px;
+        border: 1px solid var(--color-border);
+    `;
+
+    const img = document.createElement('img');
+    img.src = `data:${mediaType};base64,${imageData}`;
+    img.style.cssText = `
+        max-width: 100%;
+        height: auto;
+        display: block;
+    `;
+
+    container.appendChild(img);
+    return container;
+}
+
+function createPDFPreview(pdfData) {
+    const container = document.createElement('div');
+    container.className = 'pdf-preview';
+    container.style.cssText = `
+        margin: 1rem 0;
+        padding: 1rem;
+        background: var(--color-secondary);
+        border: 1px solid var(--color-border);
+        border-radius: 8px;
+    `;
+
+    const icon = document.createElement('div');
+    icon.innerHTML = `
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+        </svg>
+    `;
+    icon.style.marginBottom = '0.5rem';
+
+    const text = document.createElement('div');
+    text.textContent = 'PDF Document (Embedded)';
+    text.style.color = 'var(--color-text-muted)';
+
+    const downloadButton = document.createElement('button');
+    downloadButton.className = 'btn btn-secondary';
+    downloadButton.style.marginTop = '0.5rem';
+    downloadButton.textContent = 'Download PDF';
+    downloadButton.onclick = () => {
+        const blob = new Blob([Uint8Array.from(atob(pdfData), c => c.charCodeAt(0))], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'document.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    container.appendChild(icon);
+    container.appendChild(text);
+    container.appendChild(downloadButton);
+    return container;
+}
+
 export function appendMessage(elements, message, sender, isError = false) {
     let messageElement = elements.chatBox.querySelector('.message.incomplete');
     
@@ -538,23 +612,19 @@ export function appendMessage(elements, message, sender, isError = false) {
         messageElement = document.createElement('div');
         messageElement.classList.add('message');
         
-        // Determine message classes
         if (isError) {
             messageElement.classList.add('error-message');
         } else {
             messageElement.classList.add(`${sender}-message`);
-            // Only add incomplete if it's a normal assistant message
             if (sender === 'assistant') {
                 messageElement.classList.add('incomplete');
             }
         }
 
-        // Only add copy button and tabs if not an error
         if (!isError) {
             const copyButton = createCopyButton(message);
             messageElement.appendChild(copyButton);
             
-            // Add the tabs
             const tabsContainer = document.createElement('div');
             tabsContainer.className = 'message-tabs';
             
@@ -573,7 +643,6 @@ export function appendMessage(elements, message, sender, isError = false) {
             messageElement.appendChild(tabsContainer);
         }
 
-        // Create containers for markdown and plain text
         const markdownDiv = document.createElement('div');
         markdownDiv.className = 'message-content markdown-content active';
         
@@ -584,7 +653,6 @@ export function appendMessage(elements, message, sender, isError = false) {
         messageElement.appendChild(plainDiv);
         elements.chatBox.appendChild(messageElement);
 
-        // Respect user's display preference
         const preferredTab = getCurrentTabPreference();
         if (preferredTab === 'plain') {
             switchTab(messageElement, 'plain');
@@ -593,30 +661,44 @@ export function appendMessage(elements, message, sender, isError = false) {
 
     const markdownDiv = messageElement.querySelector('.markdown-content');
     const plainDiv = messageElement.querySelector('.plain-content');
+
+    // Procesar el contenido basado en su tipo
+    let displayText = '';
     
-    // Process the content based on the message type
+    if (typeof message === 'string') {
+        displayText = message;
+    } else if (Array.isArray(message)) {
+        // Si es un array de contenido (nuevo formato)
+        message.forEach(item => {
+            if (item.type === 'text') {
+                displayText += (displayText ? '\n' : '') + item.text;
+            } else if (item.type === 'image') {
+                displayText += (displayText ? '\n' : '') + `[Image: ${item.source.media_type}]`;
+            } else if (item.type === 'document' && item.source.media_type === 'application/pdf') {
+                displayText += (displayText ? '\n' : '') + '[PDF Document]';
+            }
+        });
+    }
+
+    plainDiv.textContent = displayText;
+
     if (sender === 'assistant' && !isError) {
-        let finalContent = message;
-        
-        if (messageElement.classList.contains('incomplete')) {
-            const currentContent = markdownDiv.getAttribute('data-raw-content') || '';
-            finalContent = currentContent + message;
-        }
-        
-        markdownDiv.setAttribute('data-raw-content', finalContent);
-        plainDiv.textContent = finalContent;
-        
-        // Process files and markdown formatting
-        const parts = parseMessageWithFiles(finalContent);
+        const parts = parseMessageWithFiles(displayText);
         markdownDiv.innerHTML = '';
         
         parts.forEach(part => {
             if (part.type === 'file') {
                 const fileContainer = createFileContainer(part.filename, part.content);
                 markdownDiv.appendChild(fileContainer);
+            } else if (part.type === 'image') {
+                const imagePreview = createImagePreview(part.source.data, part.source.media_type);
+                markdownDiv.appendChild(imagePreview);
+            } else if (part.type === 'document' && part.source.media_type === 'application/pdf') {
+                const pdfPreview = createPDFPreview(part.source.data);
+                markdownDiv.appendChild(pdfPreview);
             } else {
                 const textDiv = document.createElement('div');
-                textDiv.innerHTML = parseMarkdown(part.content);
+                textDiv.innerHTML = parseMarkdown(part.content || part.text);
                 markdownDiv.appendChild(textDiv);
             }
         });
@@ -636,13 +718,10 @@ export function appendMessage(elements, message, sender, isError = false) {
             };
         }
     } else {
-        // For user messages or errors
-        markdownDiv.setAttribute('data-raw-content', message);
-        plainDiv.textContent = message;
-        markdownDiv.innerHTML = parseMarkdown(message);
+        markdownDiv.innerHTML = parseMarkdown(displayText);
     }
 
-    // Auto-scroll if near the bottom
+    // Auto-scroll if near bottom
     const isNearBottom = elements.chatBox.scrollHeight - elements.chatBox.scrollTop - elements.chatBox.clientHeight < 200;
     if (isNearBottom) {
         elements.chatBox.scrollTop = elements.chatBox.scrollHeight;
@@ -849,25 +928,28 @@ function decodeHtmlEntities(text) {
 }
 
 // Function to get a readable title for the conversation
+// En ui-manager.js, modificar la función getConversationTitle
 function getConversationTitle(messages) {
     if (!messages || messages.length === 0) return 'New conversation';
     
-    const firstUserMessage = messages.find(m => m.role === 'user')?.content;
+    const firstUserMessage = messages.find(m => m.role === 'user');
     if (!firstUserMessage) return 'New conversation';
 
-    // First decode HTML entities
-    let decodedMessage = decodeHtmlEntities(firstUserMessage);
-    
-    // Remove any HTML and special markup
-    const strippedMessage = decodedMessage.replace(/<[^>]*>/g, '') // Removes HTML tags
-                                        .replace(/```[\s\S]*?```/g, '') // Removes code blocks
-                                        .replace(/\[.*?\]/g, '') // Removes content within brackets
-                                        .replace(/=== .*? ===/g, ''); // Removes separators
+    // Obtener el texto del primer mensaje
+    const textContent = firstUserMessage.content.find(c => c.type === 'text');
+    if (!textContent || !textContent.text) return 'New conversation';
 
-    // Remove multiple spaces and line breaks
+    // Decodificar y limpiar el texto
+    let decodedMessage = decodeHtmlEntities(textContent.text);
+    
+    // Remover marcado especial
+    const strippedMessage = decodedMessage.replace(/<[^>]*>/g, '')
+                                        .replace(/```[\s\S]*?```/g, '')
+                                        .replace(/\[.*?\]/g, '')
+                                        .replace(/=== .*? ===/g, '');
+
     const cleanMessage = strippedMessage.replace(/\s+/g, ' ').trim();
     
-    // If after cleaning nothing significant remains, use a default title
     if (!cleanMessage || cleanMessage.length < 3) {
         return 'New conversation';
     }

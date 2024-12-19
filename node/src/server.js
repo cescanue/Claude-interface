@@ -54,6 +54,26 @@ app.use((err, req, res, next) => {
 
 app.post('/proxy/claude', async (req, res) => {
     const isStreaming = req.body.stream === true;
+    let timeoutId;
+
+    // Función para manejar timeout
+    const setupTimeout = () => {
+        return setTimeout(() => {
+            const timeoutError = {
+                error: {
+                    type: 'timeout_error',
+                    message: 'Request timed out after 60 seconds without response'
+                }
+            };
+            
+            if (isStreaming) {
+                res.write(`data: ${JSON.stringify(timeoutError)}\n\n`);
+                res.end();
+            } else {
+                res.status(408).json(timeoutError);
+            }
+        }, 60000); // 60 segundos
+    };
 
     try {
         // Validar que existe API key
@@ -98,8 +118,26 @@ app.post('/proxy/claude', async (req, res) => {
 
         console.log(`Enviando solicitud a Claude con ${(totalLength / 1024).toFixed(2)}KB de datos`);
 
-        // Limpiar mensajes vacíos
-        const cleanMessages = req.body.messages.filter(msg => msg.content.trim() !== '');
+        // Limpiar mensajes vacíos con soporte para el nuevo formato
+        const cleanMessages = req.body.messages.filter(msg => {
+            // Si content es un array (nuevo formato)
+            if (Array.isArray(msg.content)) {
+                return msg.content.some(item => {
+                    if (item.type === 'text') {
+                        return item.text && item.text.trim() !== '';
+                    }
+                    // Para otros tipos (image, document, etc.), considerarlos no vacíos
+                    return true;
+                });
+            }
+            // Si content es string (formato antiguo)
+            if (typeof msg.content === 'string') {
+                return msg.content.trim() !== '';
+            }
+            // Para cualquier otro caso, considerar no vacío
+            return true;
+        });
+
         const cleanBody = {
             ...req.body,
             messages: cleanMessages
@@ -124,8 +162,19 @@ app.post('/proxy/claude', async (req, res) => {
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
+            const errorText = await response.text();
+            let errorData;
+            try {
+                errorData = JSON.parse(errorText);
+            } catch (e) {
+                errorData = { error: { message: errorText } };
+            }
             console.error('Error de Claude:', errorData);
+            
+            // Mejorar el mensaje de error para PDFs y otros casos específicos
+            if (errorText.includes('pdf') || errorText.includes('PDF')) {
+                errorData.error.message = 'Error processing PDF file: ' + errorData.error.message;
+            }
             
             if (isStreaming) {
                 res.write(`data: ${JSON.stringify(errorData)}\n\n`);
@@ -144,11 +193,18 @@ app.post('/proxy/claude', async (req, res) => {
 
         if (isStreaming) {
             try {
+                // Iniciar timeout
+                timeoutId = setupTimeout();
+
                 const textDecoder = new TextDecoder();
                 const stream = response.body;
                 let buffer = '';
                 
                 for await (const chunk of stream) {
+                    // Resetear el timeout con cada chunk recibido
+                    clearTimeout(timeoutId);
+                    timeoutId = setupTimeout();
+
                     buffer += textDecoder.decode(chunk, { stream: true });
                     const lines = buffer.split('\n');
                     buffer = lines.pop(); // Guardar la última línea incompleta
@@ -165,6 +221,9 @@ app.post('/proxy/claude', async (req, res) => {
                     }
                 }
 
+                // Limpiar el timeout al finalizar correctamente
+                clearTimeout(timeoutId);
+
                 // Procesar cualquier dato restante en el buffer
                 if (buffer.trim()) {
                     const dataLine = buffer.startsWith('data: ') ? buffer : `data: ${buffer}`;
@@ -176,31 +235,43 @@ app.post('/proxy/claude', async (req, res) => {
                 res.end();
 
             } catch (error) {
+                clearTimeout(timeoutId);
                 console.error('Error en el streaming:', error);
                 res.write(`data: {"error": "Streaming error: ${error.message}"}\n\n`);
                 res.end();
             }
         } else {
-            // Modo no streaming
-            const responseText = await response.text();
-            console.log('Respuesta exitosa de Claude');
-            
+            // Iniciar timeout para modo no streaming
+            timeoutId = setupTimeout();
+
             try {
-                const data = JSON.parse(responseText);
-                res.json(data);
-            } catch (e) {
-                console.error('Error parseando respuesta:', responseText);
-                res.status(500).json({
-                    error: {
-                        type: 'parse_error',
-                        message: 'Error parseando respuesta de Claude',
-                        details: e.message
-                    }
-                });
+                const responseText = await response.text();
+                clearTimeout(timeoutId);
+                console.log('Respuesta exitosa de Claude');
+                
+                try {
+                    const data = JSON.parse(responseText);
+                    res.json(data);
+                } catch (e) {
+                    console.error('Error parseando respuesta:', responseText);
+                    res.status(500).json({
+                        error: {
+                            type: 'parse_error',
+                            message: 'Error parseando respuesta de Claude',
+                            details: e.message
+                        }
+                    });
+                }
+            } catch (error) {
+                clearTimeout(timeoutId);
+                throw error;
             }
         }
 
     } catch (error) {
+        // Limpiar el timeout si existe
+        if (timeoutId) clearTimeout(timeoutId);
+
         console.error('Error en /proxy/claude:', error);
         const errorResponse = {
             error: {
@@ -257,7 +328,6 @@ app.get('/api/system-config', async (req, res) => {
     }
 });
 
-// Guardar configuración del sistema
 app.post('/api/system-config', async (req, res) => {
     try {
         const { systemDirectives, cacheContext } = req.body;

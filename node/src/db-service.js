@@ -129,26 +129,49 @@ class DBService {
         try {
             await client.query('BEGIN');
             
+            console.log(`Starting conversation save ${id}`);
+            
+            // Ensure messages are valid
+            if (!Array.isArray(messages)) {
+                throw new Error('messages must be an array');
+            }
+    
+            // Convert to JSON safely, keeping all original content
+            let messagesJson;
+            try {
+                // Use replacer to handle problematic characters specifically
+                const replacer = (key, value) => {
+                    if (typeof value === 'string') {
+                        // Only escape characters that cause PostgreSQL error
+                        return value.replace(/\u0000/g, ''); // Remove only NULL character
+                    }
+                    return value;
+                };
+    
+                messagesJson = JSON.stringify(messages, replacer);
+            } catch (error) {
+                console.error('Error converting to JSON:', error);
+                throw new Error('Error converting messages to JSON: ' + error.message);
+            }
+            
             const query = `
                 INSERT INTO conversations (id, messages) 
                 VALUES ($1, $2::jsonb)
                 ON CONFLICT (id) DO UPDATE SET 
                     messages = EXCLUDED.messages,
                     updated_at = CURRENT_TIMESTAMP
+                RETURNING id
             `;
             
-            // Convertir el array de mensajes a JSON string si no lo está ya
-            const messagesJson = typeof messages === 'string' 
-                ? messages 
-                : JSON.stringify(messages);
-            
-            await client.query(query, [id, messagesJson]);
+            const result = await client.query(query, [id, messagesJson]);
             await client.query('COMMIT');
             
-            console.log(`Conversación ${id} guardada correctamente`);
+            console.log(`Conversation ${id} saved successfully`);
+            return result.rows[0];
+    
         } catch (error) {
             await client.query('ROLLBACK');
-            console.error('Error guardando conversación:', error);
+            console.error('Error in saveConversation:', error);
             throw error;
         } finally {
             client.release();

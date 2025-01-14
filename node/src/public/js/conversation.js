@@ -476,17 +476,44 @@ export async function deleteConversation(elements, id) {
 export async function saveConversations() {
     if (activeConversationId) {
         try {
-            // Ensure that messages is an array before saving
+            debug('Starting conversation save...');
+            
+            // Validate messages exists and is an array
             const messages = conversations[activeConversationId];
-            if (!Array.isArray(messages)) {
-                throw new Error('Messages must be an array');
+            if (!messages || !Array.isArray(messages)) {
+                throw new Error('Invalid message structure');
             }
 
-            await saveConversationToServer(
-                activeConversationId, 
-                messages
-            );
-            debug('Conversation saved to the server');
+            // Make a backup before sending
+            const payload = {
+                id: activeConversationId,
+                messages: [...messages]
+            };
+
+            const response = await fetch('/api/conversations', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.text();
+
+            if (!response.ok) {
+                debug(`Server error: ${data}`);
+                throw new Error(`Server error: ${data}`);
+            }
+
+            try {
+                const jsonData = JSON.parse(data);
+                debug('Conversation saved successfully');
+                return jsonData;
+            } catch (e) {
+                debug(`Error parsing response: ${data}`);
+                throw new Error('Error in server response format');
+            }
+
         } catch (error) {
             debug(`Error saving conversation: ${error.message}`, 'error');
             throw error;

@@ -290,13 +290,54 @@ app.post('/proxy/claude', async (req, res) => {
     }
 });
 
-// Resto de endpoints...
-app.get('/api/conversations', async (req, res) => {
+app.post('/api/conversations', async (req, res) => {
     try {
-        const conversations = await DBService.getAllConversations();
-        res.json(conversations);
+        console.log('Received request to save conversation');
+        const { id, messages } = req.body;
+        
+        // Basic validations
+        if (!id) {
+            console.error('Missing ID in request');
+            return res.status(400).json({ 
+                error: 'ID is required' 
+            });
+        }
+
+        if (!messages || !Array.isArray(messages)) {
+            console.error('Invalid messages:', messages);
+            return res.status(400).json({ 
+                error: 'Messages must be an array' 
+            });
+        }
+
+        // Log the request
+        console.log('Saving conversation:', {
+            id,
+            messageCount: messages.length
+        });
+
+        // Try to save
+        await DBService.saveConversation(id, messages);
+        
+        // Respond success
+        res.json({ 
+            success: true,
+            id,
+            messageCount: messages.length
+        });
+
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        // Log error
+        console.error('Error saving conversation:', {
+            error: error.message,
+            stack: error.stack
+        });
+
+        // Respond error
+        res.status(500).json({
+            error: 'Error saving conversation',
+            details: error.message
+        });
     }
 });
 

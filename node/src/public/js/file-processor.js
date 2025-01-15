@@ -17,14 +17,14 @@ const MACOS_SYSTEM_FILES = [
 ];
 
 function sanitizePath(path) {
-    return path.replace(/[<>:"\/\\|?*]/g, '_')
+    return path.replace(/[<>:\"\/\\|?*]/g, '_')
                .replace(/\s+/g, ' ')
                .trim();
 }
 
 function normalizePath(path) {
     return path.split('/')
-              .filter(part => part && !part.match(/^\.+$/))
+              .filter(part => part && !part.match(/^\\.+$/))
               .join('/');
 }
 
@@ -53,290 +53,301 @@ async function processCompressedFile(file) {
         const arrayBuffer = await file.arrayBuffer();
         const zipContent = await zip.loadAsync(arrayBuffer);
         
-        let iaStructure = "\n<file_structure>\n";
+        let iaStructure = "\n\n";
         let userStructure = "\n=== COMPRESSED FILE STRUCTURE ===\n";
         
         const processedFiles = new Map();
         const nativeContents = [];
         const convertToTextCheckbox = document.getElementById('convert-pdf-to-text');
+        
+        // Guardar el estado original del checkbox
+        const originalCheckboxState = convertToTextCheckbox.checked;
+        
+        // Activar el checkbox temporalmente para el procesamiento
         convertToTextCheckbox.checked = true;
 
-        // Mejorar la construcción del árbol de directorios
-        const directoryTree = {};
-        
-        // Primero, recolectar todas las rutas válidas
-        const validPaths = [];
-        for (const [path, entry] of Object.entries(zipContent.files)) {
-            if (!shouldIgnorePath(path)) {
-                const normalizedPath = normalizePath(path);
-                if (normalizedPath) {
-                    validPaths.push({
-                        path: normalizedPath,
-                        isDirectory: entry.dir
-                    });
-                }
-            }
-        }
-
-        // Ordenar las rutas para procesar primero los directorios
-        validPaths.sort((a, b) => {
-            const aDepth = a.path.split('/').length;
-            const bDepth = b.path.split('/').length;
-            return aDepth - bDepth;
-        });
-
-        // Construir el árbol
-        for (const {path, isDirectory} of validPaths) {
-            const parts = path.split('/').filter(Boolean);
-            let current = directoryTree;
-            let currentPath = '';
-
-            for (let i = 0; i < parts.length; i++) {
-                const part = parts[i];
-                currentPath = currentPath ? `${currentPath}/${part}` : part;
-                const isLastPart = i === parts.length - 1;
-
-                if (!current[part]) {
-                    current[part] = {
-                        type: isLastPart ? (isDirectory ? 'directory' : 'file') : 'directory',
-                        path: currentPath,
-                        children: {}
-                    };
-                }
-                current = current[part].children;
-            }
-        }
-
-        function buildTreeStructure(tree, indent = '', currentPath = '') {
-            let iaStr = '';
-            let userStr = '';
+        try {
+            // Mejorar la construcción del árbol de directorios
+            const directoryTree = {};
             
-            const sortedEntries = Object.entries(tree)
-                .sort(([nameA], [nameB]) => nameA.localeCompare(nameB));
-
-            for (const [name, node] of sortedEntries) {
-                const sanitizedName = sanitizePath(name);
-                const fullPath = currentPath ? `${currentPath}/${sanitizedName}` : sanitizedName;
-
-                if (node.type === 'file') {
-                    iaStr += `${indent}<file path="${fullPath}" name="${sanitizedName}">\n`;
-                    iaStr += `${indent}  <metadata>\n`;
-                    iaStr += `${indent}    <fullPath>${fullPath}</fullPath>\n`;
-                    iaStr += `${indent}    <fileName>${sanitizedName}</fileName>\n`;
-                    iaStr += `${indent}  </metadata>\n`;
-                    iaStr += `${indent}</file>\n`;
-                    userStr += `${indent}📄 ${sanitizedName}\n`;
-                } else {
-                    iaStr += `${indent}<directory path="${fullPath}" name="${sanitizedName}">\n`;
-                    userStr += `${indent}📁 ${sanitizedName}\n`;
-                    const { ia: childIa, user: childUser } = buildTreeStructure(
-                        node.children,
-                        `${indent}  `,
-                        fullPath
-                    );
-                    iaStr += childIa;
-                    userStr += childUser;
-                    iaStr += `${indent}</directory>\n`;
+            // Primero, recolectar todas las rutas válidas
+            const validPaths = [];
+            for (const [path, entry] of Object.entries(zipContent.files)) {
+                if (!shouldIgnorePath(path)) {
+                    const normalizedPath = normalizePath(path);
+                    if (normalizedPath) {
+                        validPaths.push({
+                            path: normalizedPath,
+                            isDirectory: entry.dir
+                        });
+                    }
                 }
             }
-            return { ia: iaStr, user: userStr };
-        }
 
-        const { ia, user } = buildTreeStructure(directoryTree);
-        iaStructure += ia + "</file_structure>\n";
-        userStructure += user;
+            // Ordenar las rutas para procesar primero los directorios
+            validPaths.sort((a, b) => {
+                const aDepth = a.path.split('/').length;
+                const bDepth = b.path.split('/').length;
+                return aDepth - bDepth;
+            });
 
-        // Procesar archivos
-        for (const [path, zipEntry] of Object.entries(zipContent.files)) {
-            if (shouldIgnorePath(path) || zipEntry.dir) {
-                continue;
+            // Construir el árbol
+            for (const {path, isDirectory} of validPaths) {
+                const parts = path.split('/').filter(Boolean);
+                let current = directoryTree;
+                let currentPath = '';
+
+                for (let i = 0; i < parts.length; i++) {
+                    const part = parts[i];
+                    currentPath = currentPath ? `${currentPath}/${part}` : part;
+                    const isLastPart = i === parts.length - 1;
+
+                    if (!current[part]) {
+                        current[part] = {
+                            type: isLastPart ? (isDirectory ? 'directory' : 'file') : 'directory',
+                            path: currentPath,
+                            children: {}
+                        };
+                    }
+                    current = current[part].children;
+                }
             }
 
-            const normalizedPath = normalizePath(path);
-            const sanitizedPath = sanitizePath(normalizedPath);
+            function buildTreeStructure(tree, indent = '', currentPath = '') {
+                let iaStr = '';
+                let userStr = '';
+                
+                const sortedEntries = Object.entries(tree)
+                    .sort(([nameA], [nameB]) => nameA.localeCompare(nameB));
 
-            try {
-                const content = await zipEntry.async('uint8array');
-                const blob = new Blob([content]);
-                const file = new File([blob], path.split('/').pop());
-                const fileName = file.name.toLowerCase();
+                for (const [name, node] of sortedEntries) {
+                    const sanitizedName = sanitizePath(name);
+                    const fullPath = currentPath ? `${currentPath}/${sanitizedName}` : sanitizedName;
 
-                // Procesamiento específico según tipo de archivo
-                if (fileName.endsWith('.pdf')) {
-                    const base64Data = await fileToBase64(blob);
-                    
-                    if (!convertToTextCheckbox?.checked) {
+                    if (node.type === 'file') {
+                        iaStr += `${indent}\n`;
+                        iaStr += `${indent}  \n`;
+                        iaStr += `${indent}    ${fullPath}\n`;
+                        iaStr += `${indent}    ${sanitizedName}\n`;
+                        iaStr += `${indent}  \n`;
+                        iaStr += `${indent}\n`;
+                        userStr += `${indent}📄 ${sanitizedName}\n`;
+                    } else {
+                        iaStr += `${indent}\n`;
+                        userStr += `${indent}📁 ${sanitizedName}\n`;
+                        const { ia: childIa, user: childUser } = buildTreeStructure(
+                            node.children,
+                            `${indent}  `,
+                            fullPath
+                        );
+                        iaStr += childIa;
+                        userStr += childUser;
+                        iaStr += `${indent}\n`;
+                    }
+                }
+                return { ia: iaStr, user: userStr };
+            }
+
+            const { ia, user } = buildTreeStructure(directoryTree);
+            iaStructure += ia + "\n";
+            userStructure += user;
+
+            // Procesar archivos
+            for (const [path, zipEntry] of Object.entries(zipContent.files)) {
+                if (shouldIgnorePath(path) || zipEntry.dir) {
+                    continue;
+                }
+
+                const normalizedPath = normalizePath(path);
+                const sanitizedPath = sanitizePath(normalizedPath);
+
+                try {
+                    const content = await zipEntry.async('uint8array');
+                    const blob = new Blob([content]);
+                    const file = new File([blob], path.split('/').pop());
+                    const fileName = file.name.toLowerCase();
+
+                    // Procesamiento específico según tipo de archivo
+                    if (fileName.endsWith('.pdf')) {
+                        const base64Data = await fileToBase64(blob);
+                        
+                        if (!convertToTextCheckbox?.checked) {
+                            nativeContents.push({
+                                type: 'document',
+                                source: {
+                                    type: 'base64',
+                                    media_type: 'application/pdf',
+                                    data: base64Data,
+                                    metadata: buildMetadata(file, 'PDF', {
+                                        path: sanitizedPath
+                                    })
+                                }
+                            });
+                        } else {
+                            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                            
+                            const loadingTask = pdfjsLib.getDocument({
+                                data: content,
+                                fontExtraProperties: true,
+                                useSystemFonts: true,
+                                disableFontFace: false,
+                                verbosity: 0
+                            });
+                            
+                            const pdf = await loadingTask.promise;
+                            let fullText = '';
+                            
+                            for (let i = 1; i <= pdf.numPages; i++) {
+                                const page = await pdf.getPage(i);
+                                const textContent = await page.getTextContent();
+                                fullText += textContent.items.map(item => item.str).join(' ') + '\n';
+                            }
+                            
+                            processedFiles.set(sanitizedPath, { 
+                                text: fullText,
+                                type: 'text',
+                                metadata: buildMetadata(file, 'PDF', {
+                                    pages: pdf.numPages,
+                                    path: sanitizedPath
+                                })
+                            });
+                        }
+                    } else if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+                        const base64Data = await fileToBase64(blob);
                         nativeContents.push({
-                            type: 'document',
+                            type: 'image',
                             source: {
                                 type: 'base64',
-                                media_type: 'application/pdf',
+                                media_type: file.type,
                                 data: base64Data,
-                                metadata: buildMetadata(file, 'PDF', {
-                                    path: sanitizedPath
+                                metadata: buildMetadata(file, 'Image', {
+                                    path: sanitizedPath,
+                                    format: file.type
                                 })
                             }
                         });
-                    } else {
-                        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-                        
-                        const loadingTask = pdfjsLib.getDocument({
-                            data: content,
-                            fontExtraProperties: true,
-                            useSystemFonts: true,
-                            disableFontFace: false,
-                            verbosity: 0
+                    } else if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
+                        const arrayBuffer = await blob.arrayBuffer();
+                        const result = await mammoth.extractRawText({arrayBuffer});
+                        processedFiles.set(sanitizedPath, { 
+                            text: result.value,
+                            type: 'text',
+                            metadata: buildMetadata(file, 'Word', {
+                                path: sanitizedPath,
+                                format: fileName.endsWith('.docx') ? 'DOCX' : 'DOC'
+                            })
                         });
-                        
-                        const pdf = await loadingTask.promise;
+                    } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+                        const arrayBuffer = await blob.arrayBuffer();
+                        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
                         let fullText = '';
                         
-                        for (let i = 1; i <= pdf.numPages; i++) {
-                            const page = await pdf.getPage(i);
-                            const textContent = await page.getTextContent();
-                            fullText += textContent.items.map(item => item.str).join(' ') + '\n';
+                        for (const sheetName of workbook.SheetNames) {
+                            const sheet = workbook.Sheets[sheetName];
+                            const csvContent = XLSX.utils.sheet_to_csv(sheet);
+                            fullText += `=== Sheet: ${sheetName} ===\n${csvContent}\n\n`;
                         }
                         
                         processedFiles.set(sanitizedPath, { 
                             text: fullText,
                             type: 'text',
-                            metadata: buildMetadata(file, 'PDF', {
-                                pages: pdf.numPages,
-                                path: sanitizedPath
+                            metadata: buildMetadata(file, 'Excel', {
+                                path: sanitizedPath,
+                                sheets: workbook.SheetNames.length,
+                                sheetNames: workbook.SheetNames,
+                                format: fileName.endsWith('.xlsx') ? 'XLSX' : 'XLS'
                             })
                         });
-                    }
-                } else if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
-                    const base64Data = await fileToBase64(blob);
-                    nativeContents.push({
-                        type: 'image',
-                        source: {
-                            type: 'base64',
-                            media_type: file.type,
-                            data: base64Data,
-                            metadata: buildMetadata(file, 'Image', {
-                                path: sanitizedPath,
-                                format: file.type
-                            })
+                    } else {
+                        try {
+                            const text = new TextDecoder().decode(content);
+                            processedFiles.set(sanitizedPath, {
+                                text: text,
+                                type: 'text',
+                                metadata: buildMetadata(file, 'Text', {
+                                    path: sanitizedPath
+                                })
+                            });
+                        } catch (error) {
+                            debug(`Error decoding file ${sanitizedPath}: ${error.message}`, 'error');
+                            processedFiles.set(sanitizedPath, {
+                                text: `Error decoding file: ${error.message}`,
+                                type: 'error',
+                                metadata: buildMetadata(file, 'Error', {
+                                    path: sanitizedPath,
+                                    error: error.message
+                                })
+                            });
                         }
+                    }
+                } catch (error) {
+                    debug(`Error processing file ${sanitizedPath}: ${error.message}`, 'error');
+                    processedFiles.set(sanitizedPath, {
+                        text: `Error processing file: ${error.message}`,
+                        type: 'error',
+                        metadata: buildMetadata(
+                            { name: path.split('/').pop(), size: 0, lastModified: Date.now() },
+                            'Error',
+                            { path: sanitizedPath, error: error.message }
+                        )
                     });
-                } else if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
-                    const arrayBuffer = await blob.arrayBuffer();
-                    const result = await mammoth.extractRawText({arrayBuffer});
-                    processedFiles.set(sanitizedPath, { 
-                        text: result.value,
-                        type: 'text',
-                        metadata: buildMetadata(file, 'Word', {
-                            path: sanitizedPath,
-                            format: fileName.endsWith('.docx') ? 'DOCX' : 'DOC'
-                        })
-                    });
-                } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-                    const arrayBuffer = await blob.arrayBuffer();
-                    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-                    let fullText = '';
+                }
+            }
+
+            // Preparar el contenido final
+            const finalContent = [];
+
+            if (!convertToTextCheckbox?.checked && nativeContents.length > 0) {
+                finalContent.push(...nativeContents);
+            }
+
+            let textContent = iaStructure + "\n";
+            textContent += userStructure + "\n";
+            
+            if (processedFiles.size > 0) {
+                textContent += "\n";
+                
+                const sortedFiles = Array.from(processedFiles.entries())
+                    .sort(([pathA], [pathB]) => pathA.localeCompare(pathB));
+                
+                for (const [path, content] of sortedFiles) {
+                    textContent += `\n`;
+                    textContent += `  \n`;
+                    for (const [key, value] of Object.entries(content.metadata)) {
+                        textContent += `    <${key}>${value}\n`;
+                    }
+                    textContent += `  \n`;
+                    textContent += `  \n`;
                     
-                    for (const sheetName of workbook.SheetNames) {
-                        const sheet = workbook.Sheets[sheetName];
-                        const csvContent = XLSX.utils.sheet_to_csv(sheet);
-                        fullText += `=== Sheet: ${sheetName} ===\n${csvContent}\n\n`;
+                    if (content.type === 'text') {
+                        textContent += content.text + '\n';
+                    } else if (content.type === 'error') {
+                        textContent += `[ERROR] ${content.text}\n`;
                     }
                     
-                    processedFiles.set(sanitizedPath, { 
-                        text: fullText,
-                        type: 'text',
-                        metadata: buildMetadata(file, 'Excel', {
-                            path: sanitizedPath,
-                            sheets: workbook.SheetNames.length,
-                            sheetNames: workbook.SheetNames,
-                            format: fileName.endsWith('.xlsx') ? 'XLSX' : 'XLS'
-                        })
-                    });
-                } else {
-                    try {
-                        const text = new TextDecoder().decode(content);
-                        processedFiles.set(sanitizedPath, {
-                            text: text,
-                            type: 'text',
-                            metadata: buildMetadata(file, 'Text', {
-                                path: sanitizedPath
-                            })
-                        });
-                    } catch (error) {
-                        debug(`Error decoding file ${sanitizedPath}: ${error.message}`, 'error');
-                        processedFiles.set(sanitizedPath, {
-                            text: `Error decoding file: ${error.message}`,
-                            type: 'error',
-                            metadata: buildMetadata(file, 'Error', {
-                                path: sanitizedPath,
-                                error: error.message
-                            })
-                        });
-                    }
-                }
-            } catch (error) {
-                debug(`Error processing file ${sanitizedPath}: ${error.message}`, 'error');
-                processedFiles.set(sanitizedPath, {
-                    text: `Error processing file: ${error.message}`,
-                    type: 'error',
-                    metadata: buildMetadata(
-                        { name: path.split('/').pop(), size: 0, lastModified: Date.now() },
-                        'Error',
-                        { path: sanitizedPath, error: error.message }
-                    )
-                });
-            }
-        }
-
-        // Preparar el contenido final
-        const finalContent = [];
-
-        if (!convertToTextCheckbox?.checked && nativeContents.length > 0) {
-            finalContent.push(...nativeContents);
-        }
-
-        let textContent = iaStructure + "\n";
-        textContent += userStructure + "\n";
-        
-        if (processedFiles.size > 0) {
-            textContent += "<file_contents>\n";
-            
-            const sortedFiles = Array.from(processedFiles.entries())
-                .sort(([pathA], [pathB]) => pathA.localeCompare(pathB));
-            
-            for (const [path, content] of sortedFiles) {
-                textContent += `<file_content path="${path}">\n`;
-                textContent += `  <metadata>\n`;
-                for (const [key, value] of Object.entries(content.metadata)) {
-                    textContent += `    <${key}>${value}</${key}>\n`;
-                }
-                textContent += `  </metadata>\n`;
-                textContent += `  <content>\n`;
-                
-                if (content.type === 'text') {
-                    textContent += content.text + '\n';
-                } else if (content.type === 'error') {
-                    textContent += `[ERROR] ${content.text}\n`;
+                    textContent += `  \n`;
+                    textContent += `\n\n`;
                 }
                 
-                textContent += `  </content>\n`;
-                textContent += `</file_content>\n\n`;
+                textContent += "";
             }
-            
-            textContent += "</file_contents>";
+
+            finalContent.push({
+                type: 'text',
+                text: textContent,
+                metadata: {
+                    totalFiles: processedFiles.size,
+                    hasNativeContent: nativeContents.length > 0,
+                    timestamp: new Date().toISOString()
+                }
+            });
+
+            return finalContent.length === 1 ? finalContent[0] : finalContent;
+
+        } finally {
+            // Restaurar el estado original del checkbox
+            convertToTextCheckbox.checked = originalCheckboxState;
         }
-
-        finalContent.push({
-            type: 'text',
-            text: textContent,
-            metadata: {
-                totalFiles: processedFiles.size,
-                hasNativeContent: nativeContents.length > 0,
-                timestamp: new Date().toISOString()
-            }
-        });
-
-        return finalContent.length === 1 ? finalContent[0] : finalContent;
 
     } catch (error) {
         debug(`Error in processCompressedFile: ${error.message}`, 'error');
@@ -379,11 +390,8 @@ export async function processFile(file) {
             debug('Processing PDF file');
             const base64Data = await fileToBase64(file);
             
-            // Verificar si existe el checkbox y está marcado
             const convertToTextCheckbox = document.getElementById('convert-pdf-to-text');
-            convertToTextCheckbox.checked = true;
             if (convertToTextCheckbox && convertToTextCheckbox.checked) {
-                // Convertir a texto
                 const arrayBuffer = await file.arrayBuffer();
                 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
                 const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
@@ -404,7 +412,6 @@ export async function processFile(file) {
                     }
                 };
             } else {
-                // Procesar como documento nativo
                 return {
                     type: 'document',
                     source: {

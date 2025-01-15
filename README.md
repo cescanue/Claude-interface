@@ -16,8 +16,9 @@ An enterprise-grade web interface for Claude AI that seamlessly combines advance
 1. **Advanced File Processing System**:
    - Native support for PDFs and images through Claude Vision API integration
    - Intelligent file type detection and optimization
-   - Browser-based processing up to 200MB
-   - Real-time file structure analysis
+   - Browser-based processing up to 1GB
+   - Enhanced file structure analysis for compressed files
+   - Configurable PDF processing (Vision API or text extraction)
 
 2. **Enterprise-Ready Architecture**:
    - Containerized PostgreSQL database with JSONB storage
@@ -28,52 +29,55 @@ An enterprise-grade web interface for Claude AI that seamlessly combines advance
 3. **Enhanced Communication Layer**:
    - Real-time streaming with proper error recovery
    - Persistent conversation management
-   - Intelligent context handling
-   - Advanced markdown rendering system
+   - System directives configuration
+   - Advanced markdown rendering with dual view (Markdown/Plain Text)
 
 4. **Developer Experience**:
-   - Comprehensive debugging toolkit
-   - Configurable system directives
-   - Real-time request inspection
+   - Comprehensive debugging toolkit with draggable panel
+   - Configurable system directives through UI
+   - Real-time request inspection with JSON preview
    - Advanced error tracking
+   - Debug mode toggle
 
 ### Core Technical Features
 
 #### Advanced File Processing
 - **Native Integration**:
-  - PDF processing with Claude Vision API
+  - Configurable PDF processing options
   - Image analysis (JPEG, PNG, GIF, WebP)
   - Multi-format support (.docx, .xlsx, ZIP, RAR)
+  - Detailed archive structure visualization
 - **Processing Features**:
   - Automatic file type detection
   - Content extraction and optimization
   - Structure visualization
-  - Memory-efficient handling
+  - Memory-efficient handling up to 1GB
   - Custom preview generation
 
 #### Frontend Architecture
 - **UI Components**:
   - Real-time streaming management
-  - Advanced markdown processor
+  - Advanced markdown processor with dual view
   - Syntax highlighting engine
   - Dark mode implementation
+  - Draggable debug panel
 - **State Management**:
   - Conversation tracking
   - File state handling
   - Configuration management
-  - Cache optimization
+  - System directives persistence
 
 #### Backend Systems
 - **Database Layer**:
   - PostgreSQL with JSONB
-  - Efficient query optimization
   - Connection pooling
   - Transaction management
+  - System configuration storage
 - **API Integration**:
   - Claude API wrapper
   - Request streaming
   - Error handling
-  - Rate limiting
+  - Configurable timeouts
 
 ## 🚀 Technical Implementation
 
@@ -118,8 +122,8 @@ npm run build
 - **API Security**:
   - Key validation and rotation
   - Request sanitization
-  - Rate limiting
   - CORS protection
+  - Request size validation
 
 - **File Security**:
   - Local processing
@@ -169,8 +173,6 @@ npm run build
 ### Key Components Analysis
 
 #### File Processing System
-The file processing system demonstrates advanced software engineering practices:
-
 ```javascript
 async function processFile(file) {
     // Type detection and validation
@@ -197,8 +199,6 @@ Key features:
 - Type safety
 
 #### Streaming Implementation
-The streaming system showcases real-time data handling:
-
 ```javascript
 class StreamProcessor {
     constructor() {
@@ -224,8 +224,6 @@ Notable aspects:
 - Async iteration
 
 #### Database Integration
-The database layer demonstrates proper enterprise patterns:
-
 ```javascript
 class DBService {
     static async initDB() {
@@ -257,21 +255,9 @@ Key patterns:
 - Error handling
 - Resource cleanup
 
-### Engineering Highlights
+### Performance Optimizations
 
-1. **Error Handling**
-```javascript
-class ApplicationError extends Error {
-    constructor(message, code, details) {
-        super(message);
-        this.code = code;
-        this.details = details;
-        Error.captureStackTrace(this, ApplicationError);
-    }
-}
-```
-
-2. **Memory Management**
+1. **Memory Management**
 ```javascript
 class MemoryOptimizer {
     constructor(maxSize) {
@@ -288,7 +274,7 @@ class MemoryOptimizer {
 }
 ```
 
-3. **State Management**
+2. **State Management**
 ```javascript
 class ConversationManager {
     constructor() {
@@ -304,31 +290,17 @@ class ConversationManager {
 }
 ```
 
-### Performance Optimizations
-
-1. **Caching Strategy**
+3. **Request Handling**
 ```javascript
-const cache = new LRUCache({
-    max: 500,
-    maxAge: 1000 * 60 * 60,
-    updateAgeOnGet: true
-});
-```
-
-2. **Lazy Loading**
-```javascript
-const loadComponent = async (name) => {
-    const component = await import(`./components/${name}`);
-    return component.default;
-};
-```
-
-3. **Request Batching**
-```javascript
-class RequestBatcher {
-    async batch(requests) {
-        const chunks = this.chunkRequests(requests);
-        return Promise.all(chunks.map(this.processChunk));
+class RequestHandler {
+    async processRequest(req) {
+        const chunks = [];
+        
+        for await (const chunk of req) {
+            chunks.push(chunk);
+        }
+        
+        return this.handleComplete(Buffer.concat(chunks));
     }
 }
 ```
@@ -338,7 +310,6 @@ class RequestBatcher {
 - **Clean Code**: Emphasis on readability and maintainability
 - **SOLID Principles**: Adherence to software design principles
 - **DRY (Don't Repeat Yourself)**: Code reusability and modularity
-- **TDD (Test Driven Development)**: Comprehensive test coverage
 - **Performance First**: Optimization at core architecture level
 - **Security by Design**: Security considerations at every layer
 
@@ -352,21 +323,7 @@ make down     # Stop services
 make logs     # View logs
 make fclean   # Complete cleanup
 
-# Development
-npm run dev    # Start development
-npm test      # Run tests
-npm run lint   # Code linting
-npm run build  # Production build
 ```
-
-## 📈 Future Roadmap
-
-- Enhanced file type support
-- Cache optimization improvements
-- WebSocket integration for real-time updates
-- Additional Claude Vision integrations
-- API response streaming optimizations
-- Enhanced security features
 
 ## 📄 License
 

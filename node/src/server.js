@@ -8,8 +8,8 @@ const path = require('path');
 
 // Configuración básica
 app.use(cors());
-app.use(express.json({ limit: '200mb' }));
-app.use(express.urlencoded({ limit: '200mb', extended: true }));
+app.use(express.json({ limit: '1gb' }));
+app.use(express.urlencoded({ limit: '1gb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Función para esperar
@@ -57,23 +57,24 @@ app.post('/proxy/claude', async (req, res) => {
     let timeoutId;
 
     // Función para manejar timeout
-    const setupTimeout = () => {
-        return setTimeout(() => {
-            const timeoutError = {
-                error: {
-                    type: 'timeout_error',
-                    message: 'Request timed out after 60 seconds without response'
-                }
-            };
-            
-            if (isStreaming) {
-                res.write(`data: ${JSON.stringify(timeoutError)}\n\n`);
-                res.end();
-            } else {
-                res.status(408).json(timeoutError);
-            }
-        }, 60000); // 60 segundos
-    };
+	const setupTimeout = () => {
+		return setTimeout(() => {
+			const timeoutError = {
+				error: {
+					type: 'timeout_error',
+					message: 'Request exceeded the 5-minute time limit. Please try again.',
+					details: 'The server is processing a large request and needs more time.'
+				}
+			};
+			
+			if (isStreaming) {
+				res.write(`data: ${JSON.stringify(timeoutError)}\n\n`);
+				res.end();
+			} else {
+				res.status(408).json(timeoutError);
+			}
+		}, 300000); // 5 minutes
+	};
 
     try {
         // Validar que existe API key
@@ -290,6 +291,16 @@ app.post('/proxy/claude', async (req, res) => {
     }
 });
 
+app.get('/api/conversations', async (req, res) => {
+    try {
+        const conversations = await DBService.getAllConversations();
+        res.json(conversations);
+    } catch (error) {
+        console.error('Error getting conversations:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.post('/api/conversations', async (req, res) => {
     try {
         console.log('Received request to save conversation');
@@ -415,11 +426,11 @@ const PORT = process.env.PORT || 3000;
 
 connectWithRetry()
     .then(() => {
-        app.listen(PORT, '0.0.0.0', () => {
-            console.log(`Servidor iniciado en puerto ${PORT}`);
-            console.log(`Tiempo de inicio: ${new Date().toISOString()}`);
-            console.log(`Límite de tamaño configurado: 200MB`);
-        });
+		app.listen(PORT, '0.0.0.0', () => {
+			console.log(`Server started on port ${PORT}`);
+			console.log(`Start time: ${new Date().toISOString()}`);
+			console.log(`Size limit configured: 1GB`); // Updated to show new limit
+		});
     })
     .catch(err => {
         console.error('Error fatal:', err);

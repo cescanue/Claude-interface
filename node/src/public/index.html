@@ -60,23 +60,38 @@
                     </select>
                 </div>
 
+                <!-- Nueva ubicación del checkbox de PDF -->
+                <div class="flex items-center space-x-2 border border-gray-600 rounded-lg p-2 bg-gray-700">
+                    <input type="checkbox" id="convert-pdf-to-text" class="form-checkbox h-4 w-4">
+                    <label for="convert-pdf-to-text" class="text-sm text-gray-300">
+                        Convert PDFs to text
+                    </label>
+                </div>
+
                 <div id="api-key-container" class="space-y-2">
                     <label class="text-sm text-gray-400" for="api-key-input">API Key</label>
                     <input type="password" id="api-key-input" placeholder="sk-...">
                 </div>
+
                 <div id="system-config-container"></div>
+
                 <div id="max-tokens-container" class="space-y-2">
                     <label class="text-sm text-gray-400" for="max-tokens-output">Max Tokens</label>
                     <input type="number" id="max-tokens-output" value="4000">
                 </div>
 
-                <button id="toggle-debug" class="btn btn-secondary w-full">
-                    Toggle Debug Panel
-                </button>
+                <!-- Debug options container -->
+                <div class="debug-options space-y-2">
+                    <!-- Debug toggle button -->
+                    <button id="toggle-debug" class="btn btn-secondary w-full mb-2">
+                        Toggle Debug Panel
+                    </button>
 
-                <div id="debug-json-container" class="debug-json-wrapper">
-                    <input type="checkbox" id="debug-json-checkbox">
-                    <label for="debug-json-checkbox" class="text-sm text-gray-400">Debug JSON</label>
+                    <!-- Debug JSON checkbox en un contenedor estilizado similar al PDF -->
+                    <div class="flex items-center space-x-2 border border-gray-600 rounded-lg p-2 bg-gray-700">
+                        <input type="checkbox" id="debug-json-checkbox" class="form-checkbox h-4 w-4">
+                        <label for="debug-json-checkbox" class="text-sm text-gray-300">Debug JSON</label>
+                    </div>
                 </div>
             </div>
         </div>
@@ -126,14 +141,14 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
-<!-- En el head o justo antes de cerrar el body -->
+<!-- React libraries -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-<!-- El componente SystemConfig debe ir antes que app.js -->
+<!-- SystemConfig component -->
 <script src="/js/components/SystemConfig.js"></script>
 
-<!-- Tus scripts de aplicación -->
+<!-- Application scripts -->
 <script type="module" src="js/utils.js"></script>
 <script type="module" src="js/api-service.js"></script>
 <script type="module" src="js/file-processor.js"></script>

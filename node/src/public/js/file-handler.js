@@ -2,8 +2,8 @@ import { debug } from './utils.js';
 import { processFile as processSpecialFile } from './file-processor.js';
 
 let totalSize = 0;
-const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB per file
-const MAX_TOTAL_SIZE = 200 * 1024 * 1024; // 200MB total
+const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB per file
+const MAX_TOTAL_SIZE = 1024 * 1024 * 1024; // 1GB total
 
 export function setupFileHandlers(elements) {
     if (!window.uploadedFiles) {

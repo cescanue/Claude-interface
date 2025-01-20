@@ -411,6 +411,28 @@ app.get('/health', async (req, res) => {
     }
 });
 
+app.get('/api/conversations/:id/cache', async (req, res) => {
+    try {
+        const config = await DBService.getConversationCache(req.params.id);
+        res.json(config);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/conversations/:id/cache', async (req, res) => {
+    try {
+        const { cacheText, cachedFiles } = req.body;
+        await DBService.saveConversationCache(req.params.id, {
+            cacheText,
+            cachedFiles
+        });
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Manejador para rutas no encontradas
 app.use((req, res) => {
     res.status(404).json({

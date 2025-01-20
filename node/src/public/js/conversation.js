@@ -13,7 +13,15 @@ import {
 } from './ui-manager.js';
 import { sendToAPI } from './api-service.js';
 
-
+function updateActiveConversationId(id) {
+    window.activeConversationId = id;
+    activeConversationId = id;
+    // Disparar un evento custom para notificar el cambio
+    document.dispatchEvent(new CustomEvent('conversationChanged', { 
+        detail: { id } 
+    }));
+    debug(`Active conversation updated: ${id}`);
+}
 
 document.addEventListener('messageComplete', async (event) => {
     const messageElement = document.querySelector('.message.incomplete');
@@ -231,37 +239,102 @@ async function saveConversationToServer(id, messages) {
     }
 }
 
+// Primero definimos las funciones de comunicación con el servidor
 async function deleteConversationFromServer(id) {
     try {
         const response = await fetch(`/api/conversations/${id}`, {
             method: 'DELETE'
         });
-        if (!response.ok) throw new Error('Error deleting conversation');
+        if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}: ${await response.text()}`);
+        }
         return await response.json();
     } catch (error) {
-        debug('Error deleting conversation: ' + error.message, 'error');
+        debug(`Error in deleteConversationFromServer: ${error.message}`, 'error');
         throw error;
     }
 }
 
+
+// Luego las funciones de manejo de conversaciones
+export async function deleteConversation(elements, id) {
+    if (confirm('Are you sure you want to delete this conversation?')) {
+        try {
+            await deleteConversationFromServer(id);
+            delete conversations[id];
+            
+            if (id === activeConversationId) {
+                updateActiveConversationId(null);
+                activeConversationId = null;
+                clearChat(elements);
+                
+                // Disparar evento cuando no quedan conversaciones
+                if (Object.keys(conversations).length === 0) {
+                    document.dispatchEvent(new Event('conversationsCleared'));
+                }
+            }
+            
+            updateConversationsList(elements, conversations, loadConversation, deleteConversation);
+            debug(`Conversation deleted: ${id}`);
+            
+        } catch (error) {
+            debug(`Error deleting conversation: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+}
+
+// El resto de las funciones permanecen igual...
+
 export async function initializeConversations(elements) {
-    conversations = await fetchConversations();
-    if (Object.keys(conversations).length === 0) {
+    try {
+        // Cargar conversaciones existentes
+        conversations = await fetchConversations();
+        
+        // Si no hay conversaciones, crear una nueva
+        if (Object.keys(conversations).length === 0) {
+            debug('No conversations found, creating a new one...');
+            await createNewConversation(elements);
+        } else {
+            // Si hay conversaciones, cargar la más reciente
+            const mostRecentId = Object.keys(conversations)[0]; // El primero es el más reciente
+            debug(`Loading most recent conversation: ${mostRecentId}`);
+            loadConversation(elements, mostRecentId);
+        }
+
+        // Actualizar la lista de conversaciones
+        updateConversationsList(elements, conversations, loadConversation, deleteConversation);
+        return conversations;
+    } catch (error) {
+        debug(`Error initializing conversations: ${error.message}`, 'error');
+        // Si hay un error, al menos crear una nueva conversación
         await createNewConversation(elements);
     }
-    updateConversationsList(elements, conversations, loadConversation, deleteConversation);
-    return conversations;
 }
 
 export async function createNewConversation(elements) {
-    const newId = Date.now().toString();
-    conversations[newId] = [];
-    activeConversationId = newId;
-    await saveConversationToServer(newId, []);
-    updateConversationsList(elements, conversations, loadConversation, deleteConversation);
-    clearChat(elements);
-    clearFiles(elements.uploadedFilesContainer);
-    debug(`New conversation created: ${newId}`);
+    try {
+        const newId = Date.now().toString();
+        conversations[newId] = [];
+        updateActiveConversationId(newId);
+        activeConversationId = newId;
+        
+        await saveConversationToServer(newId, []);
+        updateConversationsList(elements, conversations, loadConversation, deleteConversation);
+        clearChat(elements);
+        clearFiles(elements.uploadedFilesContainer);
+        
+        debug(`New conversation created: ${newId}`);
+        
+        // Disparar evento de cambio de conversación
+        document.dispatchEvent(new CustomEvent('conversationChanged', { 
+            detail: { id: newId } 
+        }));
+
+    } catch (error) {
+        debug(`Error creating new conversation: ${error.message}`, 'error');
+        throw error;
+    }
 }
 
 function formatFileDisplay(originalContent) {
@@ -287,6 +360,7 @@ function formatFileDisplay(originalContent) {
 }
 
 export function loadConversation(elements, id) {
+    updateActiveConversationId(id);
     activeConversationId = id;
     clearChat(elements);
     
@@ -347,32 +421,25 @@ export function loadConversation(elements, id) {
                 if (item.type === 'text') {
                     const trimmedText = item.text.trim();
                     if (trimmedText) {
-                        // Verificar si el texto contiene una estructura de documento
-                        const documentPattern = /<document>\s*<source>(.*?)<\/source>/;
+                        const documentPattern = /\s*(.*?)<\/source>/;
                         const match = trimmedText.match(documentPattern);
                         
                         if (match && match[1]) {
-                            // Si se detecta un documento, extraer el nombre del archivo
                             const sourceFileName = match[1];
                             filesInfo.push(`- ${sourceFileName} [as text plain]`); 
                         } else {
-                            // Si no es un documento, tratarlo como texto normal
                             textContent.push(trimmedText);
                         }
                     }
                 } else if (item.type === 'image') {
-                    // Intentar extraer el nombre del archivo de los metadatos o usar un nombre genérico
                     const fileName = item.source.metadata?.file_name || 'image' + (filesInfo.length + 1) + '.' + item.source.media_type.split('/')[1];
                     filesInfo.push(`- ${fileName} [Image]`);
                 } else if (item.type === 'document') {
-                    // Intentar extraer el nombre del archivo de los metadatos o usar un nombre genérico
                     const fileName = item.source.metadata?.file_name || 'document' + (filesInfo.length + 1) + '.pdf';
                     filesInfo.push(`- ${fileName} [PDF Document]`);
                 }
             });
-            
 
-            // Construir el displayContent combinando el texto y la información de archivos
             displayContent = '';
             if (textContent.length > 0) {
                 displayContent = textContent.join('\n');
@@ -384,7 +451,6 @@ export function loadConversation(elements, id) {
             
             rawContent = displayContent;
         } else {
-            // Si es el formato antiguo (string)
             displayContent = formatFileDisplay(message.content);
             rawContent = message.content;
         }
@@ -401,13 +467,7 @@ export function loadConversation(elements, id) {
                         const textDiv = document.createElement('div');
                         textDiv.innerHTML = parseMarkdown(item.text);
                         markdownDiv.appendChild(textDiv);
-                    } /*else if (item.type === 'image') {
-                        const imagePreview = createImagePreview(item.source.data, item.source.media_type);
-                        markdownDiv.appendChild(imagePreview);
-                    } else if (item.type === 'document') {
-                        const pdfPreview = createPDFPreview(item.source.data);
-                        markdownDiv.appendChild(pdfPreview);
-                    }*/
+                    }
                 });
             } else {
                 const parts = parseMessageWithFiles(message.content);
@@ -440,7 +500,6 @@ export function loadConversation(elements, id) {
                 };
             }
         } else {
-            // Para mensajes del usuario
             markdownDiv.innerHTML = parseMarkdown(displayContent);
         }
 
@@ -448,7 +507,6 @@ export function loadConversation(elements, id) {
         messageElement.appendChild(plainDiv);
         elements.chatBox.appendChild(messageElement);
 
-        // Set active tab based on preference
         const preferredTab = getCurrentTabPreference();
         if (preferredTab === 'plain') {
             switchTab(messageElement, 'plain');
@@ -458,19 +516,11 @@ export function loadConversation(elements, id) {
     clearFiles(elements.uploadedFilesContainer);
     autoScrollIfNearBottom(elements.chatBox);
     debug(`Conversation loaded: ${id}`);
-}
 
-export async function deleteConversation(elements, id) {
-    if (confirm('Are you sure you want to delete this conversation?')) {
-        await deleteConversationFromServer(id);
-        delete conversations[id];
-        if (id === activeConversationId) {
-            activeConversationId = null;
-            clearChat(elements);
-        }
-        updateConversationsList(elements, conversations, loadConversation, deleteConversation);
-        debug(`Conversation deleted: ${id}`);
-    }
+    // Disparar evento de cambio de conversación
+    document.dispatchEvent(new CustomEvent('conversationChanged', { 
+        detail: { id: id } 
+    }));
 }
 
 export async function saveConversations() {

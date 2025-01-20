@@ -47,6 +47,38 @@ function buildMetadata(file, type, additionalInfo = {}) {
     };
 }
 
+// Detecta si el contenido es procesable como documento
+async function isProcessableDocument(content) {
+    try {
+        // Intentar decodificar una muestra del contenido
+        const bytes = Array.from(content);
+        const sampleSize = Math.min(bytes.length, 1024);
+        const sample = bytes.slice(0, sampleSize);
+        
+        // Contamos bytes que están fuera del rango de caracteres válidos
+        // Incluimos caracteres UTF-8 comunes y caracteres de control útiles
+        const nonValidCount = sample.filter(byte => {
+            // Permitir caracteres de control comunes
+            if ([9, 10, 13, 27].includes(byte)) return false;
+            
+            // Permitir ASCII imprimible
+            if (byte >= 32 && byte <= 126) return false;
+            
+            // Permitir UTF-8 común
+            if (byte >= 194 && byte <= 244) return false;
+            
+            return true;
+        }).length;
+
+        // Un umbral más permisivo para texto
+        const threshold = 0.15; // 15% de bytes no válidos permitidos
+        return (nonValidCount / sampleSize) <= threshold;
+    } catch (error) {
+        debug(`Error analyzing content: ${error.message}`, 'error');
+        return false;
+    }
+}
+
 async function processCompressedFile(file) {
     try {
         const zip = new JSZip();
@@ -57,82 +89,203 @@ async function processCompressedFile(file) {
         let userStructure = "\n=== COMPRESSED FILE STRUCTURE ===\n";
         
         const processedFiles = new Map();
-        const nativeContents = [];
-        const convertToTextCheckbox = document.getElementById('convert-pdf-to-text');
-        
-        // Guardar el estado original del checkbox
-        const originalCheckboxState = convertToTextCheckbox.checked;
-        
-        // Activar el checkbox temporalmente para el procesamiento
-        convertToTextCheckbox.checked = true;
+        const validPaths = [];
 
-        try {
-            // Mejorar la construcción del árbol de directorios
-            const directoryTree = {};
-            
-            // Primero, recolectar todas las rutas válidas
-            const validPaths = [];
-            for (const [path, entry] of Object.entries(zipContent.files)) {
-                if (!shouldIgnorePath(path)) {
-                    const normalizedPath = normalizePath(path);
-                    if (normalizedPath) {
-                        validPaths.push({
-                            path: normalizedPath,
-                            isDirectory: entry.dir
-                        });
-                    }
+        // Recolectar todas las rutas válidas primero
+        for (const [path, entry] of Object.entries(zipContent.files)) {
+            if (!shouldIgnorePath(path)) {
+                const normalizedPath = normalizePath(path);
+                if (normalizedPath) {
+                    validPaths.push({
+                        path: normalizedPath,
+                        isDirectory: entry.dir
+                    });
                 }
             }
+        }
 
-            // Ordenar las rutas para procesar primero los directorios
-            validPaths.sort((a, b) => {
-                const aDepth = a.path.split('/').length;
-                const bDepth = b.path.split('/').length;
-                return aDepth - bDepth;
-            });
+        // Ordenar las rutas
+        validPaths.sort((a, b) => {
+            const aDepth = a.path.split('/').length;
+            const bDepth = b.path.split('/').length;
+            return aDepth - bDepth;
+        });
 
-            // Construir el árbol
-            for (const {path, isDirectory} of validPaths) {
-                const parts = path.split('/').filter(Boolean);
-                let current = directoryTree;
-                let currentPath = '';
+        // Construir el árbol de directorios solo con archivos válidos
+        const directoryTree = {};
+        const textFiles = new Set(); // Conjunto para rastrear archivos de texto válidos
 
-                for (let i = 0; i < parts.length; i++) {
-                    const part = parts[i];
-                    currentPath = currentPath ? `${currentPath}/${part}` : part;
-                    const isLastPart = i === parts.length - 1;
-
-                    if (!current[part]) {
-                        current[part] = {
-                            type: isLastPart ? (isDirectory ? 'directory' : 'file') : 'directory',
-                            path: currentPath,
-                            children: {}
-                        };
-                    }
-                    current = current[part].children;
-                }
+        // Primera pasada: procesar los archivos y determinar cuáles son de texto
+        for (const [path, zipEntry] of Object.entries(zipContent.files)) {
+            if (shouldIgnorePath(path) || zipEntry.dir) {
+                continue;
             }
 
-            function buildTreeStructure(tree, indent = '', currentPath = '') {
-                let iaStr = '';
-                let userStr = '';
+            const normalizedPath = normalizePath(path);
+            const fileName = path.split('/').pop().toLowerCase();
+            const fileExtension = fileName.split('.').pop().toLowerCase();
+
+            debug(`Starting processing of file: ${normalizedPath}`, 'info');
+            try {
+                const content = await zipEntry.async('uint8array');
+                const blob = new Blob([content]);
+                const file = new File([blob], fileName);
                 
-                const sortedEntries = Object.entries(tree)
-                    .sort(([nameA], [nameB]) => nameA.localeCompare(nameB));
+                let processedText = '';
+                let fileType = '';
 
-                for (const [name, node] of sortedEntries) {
-                    const sanitizedName = sanitizePath(name);
-                    const fullPath = currentPath ? `${currentPath}/${sanitizedName}` : sanitizedName;
+                // Procesar según la extensión para formatos conocidos
+                if (fileExtension === 'pdf') {
+                    try {
+                        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                        const pdf = await pdfjsLib.getDocument({data: content}).promise;
+                        let text = '';
+                        
+                        for (let i = 1; i <= pdf.numPages; i++) {
+                            const page = await pdf.getPage(i);
+                            const textContent = await page.getTextContent();
+                            text += textContent.items.map(item => item.str).join(' ') + '\n';
+                        }
+                        
+                        if (text.trim()) {
+                            processedText = text;
+                            fileType = 'PDF';
+                            debug(`Successfully converted PDF to text: ${normalizedPath}`, 'info');
+                        }
+                    } catch (pdfError) {
+                        debug(`Error processing PDF ${normalizedPath}: ${pdfError.message}`, 'error');
+                    }
+                } 
+                // Procesar archivos de Excel
+                else if (['xlsx', 'xls'].includes(fileExtension)) {
+                    try {
+                        const arrayBuffer = content.buffer;
+                        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                        let text = '';
+                        
+                        for (const sheetName of workbook.SheetNames) {
+                            const sheet = workbook.Sheets[sheetName];
+                            const csvContent = XLSX.utils.sheet_to_csv(sheet);
+                            text += `=== Sheet: ${sheetName} ===\n${csvContent}\n\n`;
+                        }
+                        
+                        if (text.trim()) {
+                            processedText = text;
+                            fileType = 'Excel';
+                            debug(`Successfully converted Excel to text: ${normalizedPath}`, 'info');
+                        }
+                    } catch (xlsxError) {
+                        debug(`Error processing Excel ${normalizedPath}: ${xlsxError.message}`, 'error');
+                    }
+                }
+                // Procesar archivos de Word
+                else if (['docx', 'doc'].includes(fileExtension)) {
+                    try {
+                        const arrayBuffer = content.buffer;
+                        const result = await mammoth.extractRawText({arrayBuffer});
+                        if (result.value.trim()) {
+                            processedText = result.value;
+                            fileType = 'Word';
+                            debug(`Successfully converted Word document to text: ${normalizedPath}`, 'info');
+                        }
+                    } catch (docxError) {
+                        debug(`Error processing Word document ${normalizedPath}: ${docxError.message}`, 'error');
+                    }
+                }
+                // Para todos los demás archivos, analizar el contenido
+                else {
+                    try {
+                        if (await isProcessableDocument(content)) {
+                            const text = new TextDecoder().decode(content);
+                            if (text.trim()) {
+                                processedText = text;
+                                fileType = 'Text';
+                                debug(`Successfully processed as plain text: ${normalizedPath}`, 'info');
+                            }
+                        } else {
+                            debug(`File ${normalizedPath} detected as binary - skipping`, 'info');
+                        }
+                    } catch (error) {
+                        debug(`Error processing file as text ${normalizedPath}: ${error.message}`, 'warning');
+                    }
+                }
 
-                    if (node.type === 'file') {
-                        iaStr += `${indent}\n`;
-                        iaStr += `${indent}  \n`;
-                        iaStr += `${indent}    ${fullPath}\n`;
-                        iaStr += `${indent}    ${sanitizedName}\n`;
-                        iaStr += `${indent}  \n`;
-                        iaStr += `${indent}\n`;
-                        userStr += `${indent}📄 ${sanitizedName}\n`;
-                    } else {
+                // Si se logró procesar el contenido, guardarlo
+                if (processedText) {
+                    debug(`Adding processed file to results: ${normalizedPath} (Type: ${fileType})`, 'info');
+                    processedFiles.set(normalizedPath, {
+                        text: processedText,
+                        type: 'text',
+                        metadata: {
+                            type: fileType,
+                            path: normalizedPath
+                        }
+                    });
+                    textFiles.add(normalizedPath);
+                }
+
+            } catch (error) {
+                debug(`Error processing file ${normalizedPath}: ${error.message}`, 'error');
+            }
+        }
+
+        // Segunda pasada: construir el árbol solo con archivos de texto válidos
+        for (const {path, isDirectory} of validPaths) {
+            if (!isDirectory && !textFiles.has(path)) {
+                continue; // Saltar archivos que no son de texto
+            }
+
+            const parts = path.split('/').filter(Boolean);
+            let current = directoryTree;
+            let currentPath = '';
+
+            for (let i = 0; i < parts.length; i++) {
+                const part = parts[i];
+                currentPath = currentPath ? `${currentPath}/${part}` : part;
+                const isLastPart = i === parts.length - 1;
+
+                // Solo agregar al árbol si es un directorio o un archivo de texto válido
+                if (isLastPart && !isDirectory && !textFiles.has(currentPath)) {
+                    continue;
+                }
+
+                if (!current[part]) {
+                    current[part] = {
+                        type: isLastPart ? (isDirectory ? 'directory' : 'file') : 'directory',
+                        path: currentPath,
+                        children: {}
+                    };
+                }
+                current = current[part].children;
+            }
+        }
+
+        function buildTreeStructure(tree, indent = '', currentPath = '') {
+            let iaStr = '';
+            let userStr = '';
+            
+            const sortedEntries = Object.entries(tree)
+                .sort(([nameA], [nameB]) => nameA.localeCompare(nameB));
+
+            for (const [name, node] of sortedEntries) {
+                const sanitizedName = sanitizePath(name);
+                const fullPath = currentPath ? `${currentPath}/${sanitizedName}` : sanitizedName;
+
+                if (node.type === 'file' && textFiles.has(fullPath)) {
+                    iaStr += `${indent}\n`;
+                    iaStr += `${indent}  \n`;
+                    iaStr += `${indent}    ${fullPath}\n`;
+                    iaStr += `${indent}    ${sanitizedName}\n`;
+                    iaStr += `${indent}  \n`;
+                    iaStr += `${indent}\n`;
+                    userStr += `${indent}📄 ${sanitizedName}\n`;
+                } else if (node.type === 'directory') {
+                    // Solo incluir directorios que contengan archivos de texto
+                    const hasTextFiles = Object.values(node.children).some(child => 
+                        child.type === 'file' ? textFiles.has(`${fullPath}/${child.path.split('/').pop()}`) : true
+                    );
+                    
+                    if (hasTextFiles) {
                         iaStr += `${indent}\n`;
                         userStr += `${indent}📁 ${sanitizedName}\n`;
                         const { ia: childIa, user: childUser } = buildTreeStructure(
@@ -145,209 +298,64 @@ async function processCompressedFile(file) {
                         iaStr += `${indent}\n`;
                     }
                 }
-                return { ia: iaStr, user: userStr };
             }
-
-            const { ia, user } = buildTreeStructure(directoryTree);
-            iaStructure += ia + "\n";
-            userStructure += user;
-
-            // Procesar archivos
-            for (const [path, zipEntry] of Object.entries(zipContent.files)) {
-                if (shouldIgnorePath(path) || zipEntry.dir) {
-                    continue;
-                }
-
-                const normalizedPath = normalizePath(path);
-                const sanitizedPath = sanitizePath(normalizedPath);
-
-                try {
-                    const content = await zipEntry.async('uint8array');
-                    const blob = new Blob([content]);
-                    const file = new File([blob], path.split('/').pop());
-                    const fileName = file.name.toLowerCase();
-
-                    // Procesamiento específico según tipo de archivo
-                    if (fileName.endsWith('.pdf')) {
-                        const base64Data = await fileToBase64(blob);
-                        
-                        if (!convertToTextCheckbox?.checked) {
-                            nativeContents.push({
-                                type: 'document',
-                                source: {
-                                    type: 'base64',
-                                    media_type: 'application/pdf',
-                                    data: base64Data,
-                                    metadata: buildMetadata(file, 'PDF', {
-                                        path: sanitizedPath
-                                    })
-                                }
-                            });
-                        } else {
-                            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-                            
-                            const loadingTask = pdfjsLib.getDocument({
-                                data: content,
-                                fontExtraProperties: true,
-                                useSystemFonts: true,
-                                disableFontFace: false,
-                                verbosity: 0
-                            });
-                            
-                            const pdf = await loadingTask.promise;
-                            let fullText = '';
-                            
-                            for (let i = 1; i <= pdf.numPages; i++) {
-                                const page = await pdf.getPage(i);
-                                const textContent = await page.getTextContent();
-                                fullText += textContent.items.map(item => item.str).join(' ') + '\n';
-                            }
-                            
-                            processedFiles.set(sanitizedPath, { 
-                                text: fullText,
-                                type: 'text',
-                                metadata: buildMetadata(file, 'PDF', {
-                                    pages: pdf.numPages,
-                                    path: sanitizedPath
-                                })
-                            });
-                        }
-                    } else if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
-                        const base64Data = await fileToBase64(blob);
-                        nativeContents.push({
-                            type: 'image',
-                            source: {
-                                type: 'base64',
-                                media_type: file.type,
-                                data: base64Data,
-                                metadata: buildMetadata(file, 'Image', {
-                                    path: sanitizedPath,
-                                    format: file.type
-                                })
-                            }
-                        });
-                    } else if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
-                        const arrayBuffer = await blob.arrayBuffer();
-                        const result = await mammoth.extractRawText({arrayBuffer});
-                        processedFiles.set(sanitizedPath, { 
-                            text: result.value,
-                            type: 'text',
-                            metadata: buildMetadata(file, 'Word', {
-                                path: sanitizedPath,
-                                format: fileName.endsWith('.docx') ? 'DOCX' : 'DOC'
-                            })
-                        });
-                    } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-                        const arrayBuffer = await blob.arrayBuffer();
-                        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-                        let fullText = '';
-                        
-                        for (const sheetName of workbook.SheetNames) {
-                            const sheet = workbook.Sheets[sheetName];
-                            const csvContent = XLSX.utils.sheet_to_csv(sheet);
-                            fullText += `=== Sheet: ${sheetName} ===\n${csvContent}\n\n`;
-                        }
-                        
-                        processedFiles.set(sanitizedPath, { 
-                            text: fullText,
-                            type: 'text',
-                            metadata: buildMetadata(file, 'Excel', {
-                                path: sanitizedPath,
-                                sheets: workbook.SheetNames.length,
-                                sheetNames: workbook.SheetNames,
-                                format: fileName.endsWith('.xlsx') ? 'XLSX' : 'XLS'
-                            })
-                        });
-                    } else {
-                        try {
-                            const text = new TextDecoder().decode(content);
-                            processedFiles.set(sanitizedPath, {
-                                text: text,
-                                type: 'text',
-                                metadata: buildMetadata(file, 'Text', {
-                                    path: sanitizedPath
-                                })
-                            });
-                        } catch (error) {
-                            debug(`Error decoding file ${sanitizedPath}: ${error.message}`, 'error');
-                            processedFiles.set(sanitizedPath, {
-                                text: `Error decoding file: ${error.message}`,
-                                type: 'error',
-                                metadata: buildMetadata(file, 'Error', {
-                                    path: sanitizedPath,
-                                    error: error.message
-                                })
-                            });
-                        }
-                    }
-                } catch (error) {
-                    debug(`Error processing file ${sanitizedPath}: ${error.message}`, 'error');
-                    processedFiles.set(sanitizedPath, {
-                        text: `Error processing file: ${error.message}`,
-                        type: 'error',
-                        metadata: buildMetadata(
-                            { name: path.split('/').pop(), size: 0, lastModified: Date.now() },
-                            'Error',
-                            { path: sanitizedPath, error: error.message }
-                        )
-                    });
-                }
-            }
-
-            // Preparar el contenido final
-            const finalContent = [];
-
-            if (!convertToTextCheckbox?.checked && nativeContents.length > 0) {
-                finalContent.push(...nativeContents);
-            }
-
-            let textContent = iaStructure + "\n";
-            textContent += userStructure + "\n";
-            
-            if (processedFiles.size > 0) {
-                textContent += "\n";
-                
-                const sortedFiles = Array.from(processedFiles.entries())
-                    .sort(([pathA], [pathB]) => pathA.localeCompare(pathB));
-                
-                for (const [path, content] of sortedFiles) {
-                    textContent += `\n`;
-                    textContent += `  \n`;
-                    for (const [key, value] of Object.entries(content.metadata)) {
-                        textContent += `    <${key}>${value}\n`;
-                    }
-                    textContent += `  \n`;
-                    textContent += `  \n`;
-                    
-                    if (content.type === 'text') {
-                        textContent += content.text + '\n';
-                    } else if (content.type === 'error') {
-                        textContent += `[ERROR] ${content.text}\n`;
-                    }
-                    
-                    textContent += `  \n`;
-                    textContent += `\n\n`;
-                }
-                
-                textContent += "";
-            }
-
-            finalContent.push({
-                type: 'text',
-                text: textContent,
-                metadata: {
-                    totalFiles: processedFiles.size,
-                    hasNativeContent: nativeContents.length > 0,
-                    timestamp: new Date().toISOString()
-                }
-            });
-
-            return finalContent.length === 1 ? finalContent[0] : finalContent;
-
-        } finally {
-            // Restaurar el estado original del checkbox
-            convertToTextCheckbox.checked = originalCheckboxState;
+            return { ia: iaStr, user: userStr };
         }
+
+        const { ia, user } = buildTreeStructure(directoryTree);
+        iaStructure += ia + "\n";
+        userStructure += user;
+
+        // Preparar el contenido final
+        const finalContent = [];
+
+        let textContent = iaStructure + "\n";
+        textContent += userStructure + "\n";
+        
+        if (processedFiles.size > 0) {
+            textContent += "\n";
+            
+            const sortedFiles = Array.from(processedFiles.entries())
+                .sort(([pathA], [pathB]) => pathA.localeCompare(pathB));
+            
+            for (const [path, content] of sortedFiles) {
+                textContent += `\n`;
+                textContent += `  \n`;
+                for (const [key, value] of Object.entries(content.metadata)) {
+                    textContent += `    <${key}>${value}\n`;
+                }
+                textContent += `  \n`;
+                textContent += `  \n`;
+                
+                if (content.type === 'text') {
+                    textContent += content.text + '\n';
+                }
+                
+                textContent += `  \n`;
+                textContent += `\n\n`;
+            }
+            
+            textContent += "";
+        }
+
+        finalContent.push({
+            type: 'text',
+            text: textContent,
+            metadata: {
+                totalFiles: processedFiles.size,
+                timestamp: new Date().toISOString()
+            }
+        });
+
+        // Log resumen final
+        debug(`\n=== Processing Summary ===`, 'info');
+        debug(`Total files found: ${Object.keys(zipContent.files).filter(f => !zipContent.files[f].dir).length}`, 'info');
+        debug(`Successfully processed files: ${processedFiles.size}`, 'info');
+        debug(`Skipped/unprocessable files: ${Object.keys(zipContent.files).filter(f => !zipContent.files[f].dir).length - processedFiles.size}`, 'info');
+        debug(`File types processed: ${Array.from(new Set(Array.from(processedFiles.values()).map(f => f.metadata.type))).join(', ')}`, 'info');
+        debug(`======================\n`, 'info');
+
+        return finalContent.length === 1 ? finalContent[0] : finalContent;
 
     } catch (error) {
         debug(`Error in processCompressedFile: ${error.message}`, 'error');

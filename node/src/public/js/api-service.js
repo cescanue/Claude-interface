@@ -38,10 +38,18 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
         debug('Sending request to the API...' + (retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : ''));
         debug(`Selected model: ${elements.modelSelect.value}`);
         
+        // Obtener configuración del sistema
         const systemConfig = await fetch('/api/system-config').then(res => res.json())
             .catch(error => {
                 debug('Error fetching system config, continuing without it:', error);
                 return { systemDirectives: '', cacheContext: '' };
+            });
+
+        // Obtener caché de la conversación específica
+        const conversationCache = await fetch(`/api/conversations/${activeConversationId}/cache`).then(res => res.json())
+            .catch(error => {
+                debug('Error fetching conversation cache, continuing without it:', error);
+                return { cacheText: '', cachedFiles: [] };
             });
 
         const requestBody = {
@@ -50,24 +58,75 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
             stream: true
         };
 
-        if (systemConfig.systemDirectives || systemConfig.cacheContext) {
-            requestBody.system = [];
-            
-            if (systemConfig.systemDirectives) {
-                requestBody.system.push({
-                    type: "text",
-                    text: systemConfig.systemDirectives,
-                    cache_control: { type: "ephemeral" }
-                });
+        requestBody.system = [];
+
+        // Agregar configuración del sistema si existe
+        if (systemConfig.systemDirectives) {
+            requestBody.system.push({
+                type: "text",
+                text: systemConfig.systemDirectives,
+                cache_control: { type: "ephemeral" }
+            });
+        }
+        
+        if (systemConfig.cacheContext) {
+            requestBody.system.push({
+                type: "text",
+                text: systemConfig.cacheContext,
+                cache_control: { type: "ephemeral" }
+            });
+        }
+
+        // Agregar caché de la conversación si existe
+        if (conversationCache.cacheText) {
+            requestBody.system.push({
+                type: "text",
+                text: conversationCache.cacheText,
+                cache_control: { type: "ephemeral" }
+            });
+        }
+
+        // Agregar archivos cacheados si existen
+        if (conversationCache.cachedFiles && conversationCache.cachedFiles.length > 0) {
+            for (const file of conversationCache.cachedFiles) {
+                if (file.content) {
+                    // Verificar si es un archivo nativo (tiene el formato esperado por Claude)
+                    if (file.content.type && (file.content.type === 'image' || file.content.type === 'document') && file.content.source) {
+                        debug(`Adding native file to system: ${file.name}`, 'info');
+                        
+                        // Crear una copia del contenido sin metadatos
+                        const { type, source } = file.content;
+                        // Eliminar metadata del source si existe
+                        const cleanSource = { ...source };
+                        if (cleanSource.metadata) {
+                            delete cleanSource.metadata;
+                        }
+                        
+                        requestBody.system.push({
+                            type,
+                            source: cleanSource,
+                            cache_control: { type: "ephemeral" }
+                        });
+                    } else {
+                        // Para archivos no nativos, convertir a texto
+                        const fileContent = typeof file.content === 'object' ? 
+                            JSON.stringify(file.content, null, 2) : 
+                            file.content;
+
+                        requestBody.system.push({
+                            type: "text",
+                            text: `File: ${file.name}\n\n${fileContent}`,
+                            cache_control: { type: "ephemeral" }
+                        });
+                    }
+                    debug(`Added file to system: ${file.name}`, 'info');
+                }
             }
-            
-            if (systemConfig.cacheContext) {
-                requestBody.system.push({
-                    type: "text",
-                    text: systemConfig.cacheContext,
-                    cache_control: { type: "ephemeral" }
-                });
-            }
+        }
+
+        // Si no hay elementos en system, eliminar el array
+        if (requestBody.system.length === 0) {
+            delete requestBody.system;
         }
 
         // Convertir mensajes anteriores al formato correcto y limpiar metadatos

@@ -1301,3 +1301,8 @@ input:focus,
 .debug-options:last-child {
     margin-bottom: 0;
 }
+
+.button-container {
+    display: flex;
+    gap: 0.5rem;
+}

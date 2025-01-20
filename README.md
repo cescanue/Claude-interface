@@ -1,85 +1,185 @@
-# 🚀 Claude Advanced Interface Platform
+# 🌟 Claude Advanced Interface Platform
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker)](https://www.docker.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-336791?style=for-the-badge&logo=postgresql)](https://www.postgresql.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-Powered-339933?style=for-the-badge&logo=node.js)](https://nodejs.org/)
-[![React](https://img.shields.io/badge/React-Components-61DAFB?style=for-the-badge&logo=react)](https://reactjs.org/)
-[![TypeScript Ready](https://img.shields.io/badge/TypeScript-Ready-3178C6?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+<div align="center">
 
-## 🌟 Purpose & Vision
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Node.js](https://img.shields.io/badge/Node.js-18+-green)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Latest-blue)
+![Docker](https://img.shields.io/badge/Docker-Ready-blue)
 
-An enterprise-grade web interface for Claude AI that seamlessly combines advanced functionality with an intuitive user experience. This platform represents a sophisticated implementation of Claude's capabilities, demonstrating modern web development practices and robust architectural design.
+*An advanced web interface for Claude AI with enterprise-grade caching capabilities, file processing, and cost optimization features.*
 
-### Key Innovations
+[Features](#-key-features) •
+[Architecture](#-architecture) •
+[Installation](#-installation) •
+[Development](#-development) •
+[Technical Docs](#-technical-documentation)
 
-1. **Advanced File Processing System**:
-   - Native support for PDFs and images through Claude Vision API integration
-   - Intelligent file type detection and optimization
-   - Browser-based processing up to 1GB
-   - Enhanced file structure analysis for compressed files
-   - Configurable PDF processing (Vision API or text extraction)
+</div>
 
-2. **Enterprise-Ready Architecture**:
-   - Containerized PostgreSQL database with JSONB storage
-   - Modular Node.js backend with robust error handling
-   - Event-driven frontend architecture
-   - Comprehensive logging and debugging system
+## 📋 Table of Contents
 
-3. **Enhanced Communication Layer**:
-   - Real-time streaming with proper error recovery
-   - Persistent conversation management
-   - System directives configuration
-   - Advanced markdown rendering with dual view (Markdown/Plain Text)
+- [Key Features](#-key-features)
+- [Caching System](#-caching-system)
+- [File Processing](#-file-processing)
+- [Architecture](#-architecture)
+- [Installation](#-installation)
+- [Development](#-development)
+- [Technical Documentation](#-technical-documentation)
 
-4. **Developer Experience**:
-   - Comprehensive debugging toolkit with draggable panel
-   - Configurable system directives through UI
-   - Real-time request inspection with JSON preview
-   - Advanced error tracking
-   - Debug mode toggle
+## ✨ Key Features
 
-### Core Technical Features
+### Multi-layered Caching System
+- **Conversation Cache** - Individual storage of context and files
+- **Global Cache** - System directives and shared context
+- **Cost Optimization** - Smart context reuse
 
-#### Advanced File Processing
-- **Native Integration**:
-  - Configurable PDF processing options
-  - Image analysis (JPEG, PNG, GIF, WebP)
-  - Multi-format support (.docx, .xlsx, ZIP, RAR)
-  - Detailed archive structure visualization
-- **Processing Features**:
-  - Automatic file type detection
-  - Content extraction and optimization
-  - Structure visualization
-  - Memory-efficient handling up to 1GB
-  - Custom preview generation
+### Advanced File Processing
+- **Supported Formats** - PDF, images, Office documents, compressed files
+- **Configurable Processing** - Choice between Vision API and text extraction
+- **Structure Analysis** - Detailed visualization of compressed files
 
-#### Frontend Architecture
-- **UI Components**:
-  - Real-time streaming management
-  - Advanced markdown processor with dual view
-  - Syntax highlighting engine
-  - Dark mode implementation
-  - Draggable debug panel
-- **State Management**:
-  - Conversation tracking
-  - File state handling
-  - Configuration management
-  - System directives persistence
+### Modern Interface
+- **Real-time Streaming** - Fluid responses with thinking indicator
+- **Dual View** - Markdown and plain text with syntax highlighting
+- **Debug Panel** - Advanced development and diagnostic tools
 
-#### Backend Systems
-- **Database Layer**:
-  - PostgreSQL with JSONB
-  - Connection pooling
-  - Transaction management
-  - System configuration storage
-- **API Integration**:
-  - Claude API wrapper
-  - Request streaming
-  - Error handling
-  - Configurable timeouts
+## 💾 Caching System
 
-## 🚀 Technical Implementation
+The caching system is one of the platform's most powerful features, designed to optimize API usage and enhance response consistency.
+
+### Conversation Cache
+
+```javascript
+// Conversation cache structure
+{
+    conversation_id: string,
+    cache_text: string,      // Conversation-specific context
+    cached_files: [{         // Processed and stored files
+        name: string,
+        content: {
+            type: "text" | "image" | "document",
+            data: string | base64
+        }
+    }]
+}
+```
+
+#### Features:
+- Persistent PostgreSQL storage
+- Independent per-conversation management
+- Automatic recovery when loading conversations
+- File processing optimization
+
+### System Global Cache
+
+```javascript
+// System configuration structure
+{
+    system_directives: string,  // Claude's global behavior
+    cache_context: string       // Context shared across conversations
+}
+```
+
+#### Benefits:
+- Token usage reduction
+- Response consistency
+- Behavior customization
+- Cost optimization
+
+## 📁 File Processing
+
+### Supported Formats
+
+| Type | Formats | Processing |
+|------|----------|---------------|
+| Images | JPEG, PNG, GIF, WebP | Native via Claude Vision API |
+| Documents | PDF | Configurable (Vision/Text) |
+| Office | DOCX, XLSX | Text extraction |
+| Compressed | ZIP, RAR | Structural analysis |
+
+### Processing Pipeline
+
+```javascript
+async function processFile(file) {
+    // 1. Type detection
+    const fileType = await detectFileType(file);
+    
+    // 2. Validation and limits
+    validateFileSize(file);  // Limit: 1GB
+    
+    // 3. Specific processing
+    switch(fileType) {
+        case 'pdf':
+            return convertPdfToText ? extractText(file) : 
+                                    prepareForVisionAPI(file);
+        case 'image':
+            return prepareForVisionAPI(file);
+        case 'archive':
+            return analyzeStructure(file);
+        default:
+            return extractText(file);
+    }
+}
+```
+
+## 🏗 Architecture
+
+```plaintext
+┌─────────────────────────────────────────┐
+│  Frontend (React Components)            │
+├─────────────────────────────────────────┤
+│  ┌─────────────┐  ┌──────────────────┐  │
+│  │  UI Manager │  │  File Processor  │  │
+│  └─────────────┘  └──────────────────┘  │
+│  ┌─────────────┐  ┌──────────────────┐  │
+│  │   Cache     │  │  Debug Panel     │  │
+│  └─────────────┘  └──────────────────┘  │
+└─────────────────────────────────────────┘
+               ↕ HTTP/WS
+┌─────────────────────────────────────────┐
+│  Backend (Node.js)                      │
+├─────────────────────────────────────────┤
+│  ┌─────────────┐  ┌──────────────────┐  │
+│  │ API Router  │  │  Stream Handler  │  │
+│  └─────────────┘  └──────────────────┘  │
+│  ┌─────────────┐  ┌──────────────────┐  │
+│  │ DB Service  │  │  Claude Client   │  │
+│  └─────────────┘  └──────────────────┘  │
+└─────────────────────────────────────────┘
+               ↕ SQL
+┌─────────────────────────────────────────┐
+│  PostgreSQL Database                    │
+├─────────────────────────────────────────┤
+│  ┌─────────────┐  ┌──────────────────┐  │
+│  │Conversations│  │  System Config   │  │
+│  └─────────────┘  └──────────────────┘  │
+│  ┌─────────────────────────────────────┐│
+│  │        Conversation Cache           ││
+│  └─────────────────────────────────────┘│
+└─────────────────────────────────────────┘
+```
+
+### Key Components
+
+#### Frontend Layer
+- React-based components
+- Real-time streaming management
+- File processing and preview
+- Debug tools and monitoring
+
+#### Backend Layer
+- Node.js server with Express
+- PostgreSQL database integration
+- Claude API integration
+- Stream processing
+
+#### Database Layer
+- JSONB storage for conversations
+- Cache management tables
+- System configuration storage
+
+## 🚀 Installation
 
 ### Prerequisites
 ```bash
@@ -88,233 +188,25 @@ An enterprise-grade web interface for Claude AI that seamlessly combines advance
 - Claude API key (sk-)
 ```
 
-### Production Deployment
+### Quick Start
 ```bash
-# Clone and setup
+# Clone repository
 git clone [repository-url]
-cd claude-chat-interface/Docker
 
-# Initialize infrastructure
-make setup  # Create necessary directories and configs
-make all    # Build and deploy containers
+# Setup environment
+cp .env.example .env
+make setup
 
-# Verify deployment
-make logs   # Monitor container logs
+# Start services
+make all
+
+# Monitor logs
+make logs
 ```
 
-### Development Setup
-```bash
-# Install dependencies
-npm install
+## 💻 Development
 
-# Start development server
-npm run dev
-
-# Run tests
-npm test
-
-# Build production
-npm run build
-```
-
-## 🛡️ Security Measures
-
-- **API Security**:
-  - Key validation and rotation
-  - Request sanitization
-  - CORS protection
-  - Request size validation
-
-- **File Security**:
-  - Local processing
-  - Content validation
-  - Memory management
-  - Secure transmission
-
-- **Database Security**:
-  - Connection pooling
-  - Query parameterization
-  - Transaction isolation
-  - Encryption at rest
-
-## 💻 Code Architecture & Analysis
-
-### Project Structure
-```
-./
-├── docker-compose.yml      # Docker compose configuration
-├── Makefile               # Build automation
-├── README.md              # Documentation
-├── node/                  # Node.js application
-│   ├── Dockerfile         # Node container configuration
-│   └── src/
-│       ├── db-config.js   # Database configuration
-│       ├── db-service.js  # Database service layer
-│       ├── server.js      # Main server application
-│       ├── package.json   # Node.js dependencies
-│       └── public/        # Frontend assets
-│           ├── index.html # Main HTML template
-│           ├── styles.css # CSS styles
-│           └── js/        # JavaScript modules
-│               ├── api-service.js    # API integration
-│               ├── app.js            # Main application
-│               ├── conversation.js   # Conversation handling
-│               ├── dom-elements.js   # DOM management
-│               ├── file-handler.js   # File processing
-│               ├── file-processor.js # File type handling
-│               ├── ui-manager.js     # UI state management
-│               ├── utils.js          # Utility functions
-│               └── components/       # React components
-└── postgres/              # PostgreSQL configuration
-    └── init/
-        └── init.sql      # Database initialization
-```
-
-### Key Components Analysis
-
-#### File Processing System
-```javascript
-async function processFile(file) {
-    // Type detection and validation
-    const fileType = await detectFileType(file);
-    validateFileType(fileType);
-
-    // Memory efficient processing
-    const processor = getProcessor(fileType);
-    const stream = createReadStream(file);
-    
-    // Custom error handling
-    try {
-        return await processor.process(stream);
-    } catch (error) {
-        handleProcessingError(error);
-    }
-}
-```
-
-Key features:
-- Stream processing for memory efficiency
-- Dynamic processor selection
-- Error boundary implementation
-- Type safety
-
-#### Streaming Implementation
-```javascript
-class StreamProcessor {
-    constructor() {
-        this.buffer = new StreamBuffer();
-        this.decoder = new TextDecoder();
-    }
-
-    async processChunk(chunk) {
-        const text = this.decoder.decode(chunk, { stream: true });
-        const messages = this.buffer.process(text);
-        
-        for (const message of messages) {
-            await this.emit('message', message);
-        }
-    }
-}
-```
-
-Notable aspects:
-- Buffer management
-- Decoder optimization
-- Event-driven architecture
-- Async iteration
-
-#### Database Integration
-```javascript
-class DBService {
-    static async initDB() {
-        const pool = new Pool(config);
-        await this.validateConnection(pool);
-        await this.initializeTables();
-        return pool;
-    }
-
-    static async saveConversation(id, messages) {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            await this.insertMessages(client, id, messages);
-            await client.query('COMMIT');
-        } catch (error) {
-            await client.query('ROLLBACK');
-            throw new DatabaseError(error);
-        } finally {
-            client.release();
-        }
-    }
-}
-```
-
-Key patterns:
-- Connection pooling
-- Transaction management
-- Error handling
-- Resource cleanup
-
-### Performance Optimizations
-
-1. **Memory Management**
-```javascript
-class MemoryOptimizer {
-    constructor(maxSize) {
-        this.maxSize = maxSize;
-        this.currentSize = 0;
-    }
-
-    async optimizeFile(file) {
-        if (this.willExceedMemory(file)) {
-            return this.processInChunks(file);
-        }
-        return this.processWhole(file);
-    }
-}
-```
-
-2. **State Management**
-```javascript
-class ConversationManager {
-    constructor() {
-        this.conversations = new Map();
-        this.activeConversation = null;
-    }
-
-    async switchConversation(id) {
-        await this.saveCurrentState();
-        this.activeConversation = await this.loadConversation(id);
-        this.emit('conversationChanged', id);
-    }
-}
-```
-
-3. **Request Handling**
-```javascript
-class RequestHandler {
-    async processRequest(req) {
-        const chunks = [];
-        
-        for await (const chunk of req) {
-            chunks.push(chunk);
-        }
-        
-        return this.handleComplete(Buffer.concat(chunks));
-    }
-}
-```
-
-## 🎯 Development Principles
-
-- **Clean Code**: Emphasis on readability and maintainability
-- **SOLID Principles**: Adherence to software design principles
-- **DRY (Don't Repeat Yourself)**: Code reusability and modularity
-- **Performance First**: Optimization at core architecture level
-- **Security by Design**: Security considerations at every layer
-
-## 🔧 Development Commands
-
+### Available Commands
 ```bash
 # Infrastructure
 make setup     # Initialize infrastructure
@@ -322,8 +214,88 @@ make all      # Deploy all services
 make down     # Stop services
 make logs     # View logs
 make fclean   # Complete cleanup
-
 ```
+
+### Debug Features
+
+The platform includes an advanced debug panel with:
+- Real-time request monitoring
+- JSON inspection
+- Error tracking
+- Performance metrics
+
+## 📝 Technical Documentation
+
+### Database Schema
+```sql
+-- Conversations Table
+CREATE TABLE conversations (
+    id VARCHAR(50) PRIMARY KEY,
+    messages JSONB,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+-- Cache Table
+CREATE TABLE conversation_cache (
+    conversation_id VARCHAR(50) PRIMARY KEY,
+    cache_text TEXT,
+    cached_files JSONB,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+);
+
+-- System Configuration
+CREATE TABLE system_config (
+    id SERIAL PRIMARY KEY,
+    system_directives TEXT,
+    cache_context TEXT
+);
+```
+
+### API Endpoints
+
+```plaintext
+POST /proxy/claude        - Claude API proxy with streaming
+GET  /api/conversations  - Retrieve all conversations
+POST /api/conversations  - Save conversation
+GET  /api/system-config  - Get system configuration
+POST /api/system-config  - Update system configuration
+```
+
+### Security Measures
+
+- **API Security**
+  - Key validation
+  - Request sanitization
+  - Rate limiting
+  - CORS protection
+
+- **Data Security**
+  - PostgreSQL encryption
+  - Secure file processing
+  - Input validation
+  - XSS prevention
+
+### Performance Optimizations
+
+1. **Cache Strategy**
+   - System directives caching
+   - Conversation context persistence
+   - File content caching
+
+2. **Memory Management**
+   - Streaming processing
+   - Efficient file handling
+   - Resource cleanup
+
+3. **Cost Optimization**
+   - Context reuse
+   - Token usage optimization
+   - Response caching
+
+## 🤝 Contributing
+
+Contributions are welcome! Please read our contributing guidelines and submit pull requests to our repository.
 
 ## 📄 License
 
@@ -331,4 +303,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-*Engineered with precision and architected for scale*

@@ -7,14 +7,12 @@ export function loadSavedApiKey(apiKeyInput) {
     }
 }
 
-// Función auxiliar para limpiar metadatos
 function cleanContentForAPI(content) {
     if (Array.isArray(content)) {
         return content.map(item => {
             if (item.type === 'text') {
                 return item;
             } else if (item.type === 'image' || item.type === 'document') {
-                // Crear una copia sin los metadatos
                 return {
                     type: item.type,
                     source: {
@@ -38,14 +36,12 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
         debug('Sending request to the API...' + (retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : ''));
         debug(`Selected model: ${elements.modelSelect.value}`);
         
-        // Obtener configuración del sistema
         const systemConfig = await fetch('/api/system-config').then(res => res.json())
             .catch(error => {
                 debug('Error fetching system config, continuing without it:', error);
                 return { systemDirectives: '', cacheContext: '' };
             });
 
-        // Obtener caché de la conversación específica
         const conversationCache = await fetch(`/api/conversations/${activeConversationId}/cache`).then(res => res.json())
             .catch(error => {
                 debug('Error fetching conversation cache, continuing without it:', error);
@@ -55,12 +51,11 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
         const requestBody = {
             model: elements.modelSelect.value,
             max_tokens: parseInt(elements.maxTokensOutput.value),
-            stream: true
+            stream: true,
+            system: []
         };
 
-        requestBody.system = [];
-
-        // Agregar configuración del sistema si existe
+        // Add system directives if they exist
         if (systemConfig.systemDirectives) {
             requestBody.system.push({
                 type: "text",
@@ -77,7 +72,7 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
             });
         }
 
-        // Agregar caché de la conversación si existe
+        // Add conversation cache text if it exists
         if (conversationCache.cacheText) {
             requestBody.system.push({
                 type: "text",
@@ -86,58 +81,61 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
             });
         }
 
-        // Agregar archivos cacheados si existen
+        // Process and concatenate all cached files into a single system entry
         if (conversationCache.cachedFiles && conversationCache.cachedFiles.length > 0) {
-            for (const file of conversationCache.cachedFiles) {
-                if (file.content) {
-                    // Verificar si es un archivo nativo (tiene el formato esperado por Claude)
-                    if (file.content.type && (file.content.type === 'image' || file.content.type === 'document') && file.content.source) {
-                        debug(`Adding native file to system: ${file.name}`, 'info');
-                        
-                        // Crear una copia del contenido sin metadatos
-                        const { type, source } = file.content;
-                        // Eliminar metadata del source si existe
-                        const cleanSource = { ...source };
-                        if (cleanSource.metadata) {
-                            delete cleanSource.metadata;
-                        }
-                        
-                        requestBody.system.push({
-                            type,
-                            source: cleanSource,
-                            cache_control: { type: "ephemeral" }
-                        });
-                    } else {
-                        // Para archivos no nativos, convertir a texto
-                        const fileContent = typeof file.content === 'object' ? 
-                            JSON.stringify(file.content, null, 2) : 
-                            file.content;
+            const nativeFiles = [];
+            const textFiles = [];
 
-                        requestBody.system.push({
-                            type: "text",
-                            text: `File: ${file.name}\n\n${fileContent}`,
-                            cache_control: { type: "ephemeral" }
-                        });
+            for (const file of conversationCache.cachedFiles) {
+                if (!file.content) continue;
+
+                if (file.content.type && (file.content.type === 'image' || file.content.type === 'document') && file.content.source) {
+                    debug(`Processing native file: ${file.name}`, 'info');
+                    const { type, source } = file.content;
+                    const cleanSource = { ...source };
+                    if (cleanSource.metadata) {
+                        delete cleanSource.metadata;
                     }
-                    debug(`Added file to system: ${file.name}`, 'info');
+                    nativeFiles.push({ type, source: cleanSource });
+                } else {
+                    const fileContent = typeof file.content === 'object' ? 
+                        JSON.stringify(file.content, null, 2) : 
+                        file.content;
+                    textFiles.push(`File: ${file.name}\n\n${fileContent}`);
                 }
+            }
+
+            // Add concatenated text files as a single entry
+            if (textFiles.length > 0) {
+                requestBody.system.push({
+                    type: "text",
+                    text: textFiles.join('\n\n---\n\n'),
+                    cache_control: { type: "ephemeral" }
+                });
+            }
+
+            // Add native files as a single concatenated entry
+            if (nativeFiles.length > 0) {
+                const concatenatedNativeFiles = nativeFiles.map(file => ({
+                    ...file,
+                    cache_control: { type: "ephemeral" }
+                }));
+                requestBody.system.push(...concatenatedNativeFiles);
             }
         }
 
-        // Si no hay elementos en system, eliminar el array
+        // Remove system array if empty
         if (requestBody.system.length === 0) {
             delete requestBody.system;
         }
 
-        // Convertir mensajes anteriores al formato correcto y limpiar metadatos
-        requestBody.messages = conversations[activeConversationId].map(msg => {
-            return {
-                role: msg.role,
-                content: cleanContentForAPI(msg.content)
-            };
-        });
+        // Convert previous messages to correct format and clean metadata
+        requestBody.messages = conversations[activeConversationId].map(msg => ({
+            role: msg.role,
+            content: cleanContentForAPI(msg.content)
+        }));
 
-        // Add verification for the debug JSON checkbox
+        // Handle debug JSON checkbox
         const debugJsonCheckbox = document.getElementById('debug-json-checkbox');
         if (debugJsonCheckbox && debugJsonCheckbox.checked) {
             const shouldContinue = await showDebugDialog(requestBody);
@@ -179,7 +177,6 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
                 const { value, done } = await reader.read();
                 if (done) break;
 
-                // Actualizar el tiempo de última respuesta
                 lastResponseTime = Date.now();
 
                 buffer += decoder.decode(value, { stream: true });
@@ -225,18 +222,12 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
                                 throw new Error(errorMessage);
                             }
 
-                            // Manejo específico para error de timeout
                             if (parsed.error?.type === 'timeout_error') {
                                 throw new Error(parsed.error.message);
                             }
 
-                            if (parsed.type === 'message_start') {
-                                debug('Message started');
-                                continue;
-                            }
-
-                            if (parsed.type === 'content_block_start') {
-                                debug('Content block started');
+                            if (parsed.type === 'message_start' || parsed.type === 'content_block_start') {
+                                debug(`${parsed.type} received`);
                                 continue;
                             }
 
@@ -262,7 +253,7 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
                             }
 
                             if (parsed.type === 'content_block_stop' || parsed.type === 'message_stop') {
-                                debug('Content block/message stopped');
+                                debug(`${parsed.type} received`);
                             }
 
                         } catch (e) {
@@ -278,7 +269,6 @@ export async function sendToAPI(messageContent, elements, conversations, activeC
                     }
                 }
 
-                // Verificar si ha pasado demasiado tiempo sin respuesta (60 segundos)
                 if (Date.now() - lastResponseTime > 60000) {
                     throw new Error('Response timeout: No response received for 60 seconds');
                 }
